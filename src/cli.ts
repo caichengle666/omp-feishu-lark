@@ -1,8 +1,9 @@
 #!/usr/bin/env bun
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, watch, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, watch, writeFileSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { tmpdir } from "node:os";
 
 const isWindows = process.platform === "win32";
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -83,8 +84,10 @@ const extensionDir = join(pluginDir, "extension");
 const runtimeDir = join(homeDir, ".omp", "agent", "feishu");
 const configPath = join(runtimeDir, "config.json");
 const lockPath = join(homeDir, ".omp", "agent", "locks.json");
-const depsDir = join(homeDir, ".omp", "plugins");
-const watcherDestination = join(homeDir, ".omp", "feishu-watcher.mjs");
+const supportDir = join(pluginDir, "support");
+const supervisorPath = join(supportDir, "feishu-supervisor.mjs");
+const supervisorPidPath = join(runtimeDir, "supervisor.pid");
+const supervisorStopPath = join(runtimeDir, "supervisor.stop");
 const legacyConfigPath = join(homeDir, ".pi", "agent", "feishu", "config.json");
 workspace = workspace || homeDir;
 
@@ -93,18 +96,6 @@ info(`target: ${pluginDir}`);
 ok(`bun: ${bunBin}`);
 ok(`omp: ${ompBin}`);
 if (pythonBin) ok(`python: ${pythonBin}`); else ok("python: not found (ASR 转写不可用)");
-
-mkdirSync(depsDir, { recursive: true });
-const depsPackage = join(depsDir, "package.json");
-if (!existsSync(depsPackage)) {
-  writeFileSync(depsPackage, JSON.stringify({ name: "omp-feishu-deps", private: true }, null, 2));
-}
-if (!existsSync(join(depsDir, "node_modules", "@larksuiteoapi", "node-sdk"))) {
-  info("installing Feishu SDK...");
-  const installed = spawnSync(bunBin, ["add", "@larksuiteoapi/node-sdk"], { cwd: depsDir, stdio: "inherit" });
-  if (installed.status !== 0) fail("Could not install @larksuiteoapi/node-sdk.");
-}
-ok("Feishu SDK ready");
 
 if (!existsSync(configPath) && existsSync(legacyConfigPath)) {
   mkdirSync(runtimeDir, { recursive: true });
@@ -137,17 +128,42 @@ if (!config) {
 
 await checkFeishuApp(config);
 
+if (restart) {
+  mkdirSync(runtimeDir, { recursive: true });
+  await stopExistingProcess(supervisorPidPath, supervisorStopPath);
+  await stopExistingDaemon(lockPath);
+}
+
 if (existsSync(extensionDir)) removeDirectory(extensionDir);
+try { rmSync(join(runtimeDir, "start-daemon.cmd"), { force: true }); } catch {}
+try { rmSync(join(homeDir, ".omp", "feishu-watcher.mjs"), { force: true }); } catch {}
 mkdirSync(extensionDir, { recursive: true });
-const extensionFiles = ["attachments.ts", "bridge-runtime.ts", "bridge-store.ts", "card-action-webhook.ts", "cards.ts", "config.ts", "conversation-manager.ts", "debug.ts", "dedupe-store.ts", "delivery.ts", "gateway-lock.ts", "index.ts", "message-handler.ts", "messages.ts", "prompt-timeout.ts", "rich-text.ts", "setup.ts", "task-status-card.ts", "tencent-asr.ts", "transport.ts", "types.ts"];
+mkdirSync(supportDir, { recursive: true });
+const extensionFiles = ["attachments.ts", "bridge-runtime.ts", "bridge-store.ts", "card-action-webhook.ts", "cards.ts", "config.ts", "conversation-manager.ts", "debug.ts", "dedupe-store.ts", "delivery.ts", "gateway-lock.ts", "index.ts", "message-handler.ts", "messages.ts", "prompt-timeout.ts", "rich-text.ts", "rpc-worker-pool.ts", "setup.ts", "task-status-card.ts", "tencent-asr.ts", "transport.ts", "types.ts"];
 for (const file of extensionFiles) {
   writeFileSync(join(extensionDir, file), readFileSync(join(packageRoot, "extension", file)));
 }
-writeFileSync(watcherDestination, readFileSync(join(packageRoot, "support", "feishu-watcher.mjs")));
+writeFileSync(supervisorPath, readFileSync(join(packageRoot, "support", "feishu-supervisor.mjs")));
 ok("Plugin files installed");
 
-const buildTarget = isWindows ? "NUL" : "/dev/null";
+const pluginPackagePath = join(pluginDir, "package.json");
+writeFileSync(pluginPackagePath, `${JSON.stringify({
+  name: "omp-feishu-runtime",
+  private: true,
+  type: "module",
+  dependencies: {
+    "@larksuiteoapi/node-sdk": "^1.73.0",
+    "qrcode-terminal": "^0.12.0",
+  },
+}, null, 2)}\n`);
+info("installing plugin runtime dependencies...");
+const installed = spawnSync(bunBin, ["install", "--production"], { cwd: pluginDir, stdio: "inherit" });
+if (installed.status !== 0) fail("Could not install plugin runtime dependencies.");
+ok("Plugin dependencies ready");
+
+const buildTarget = join(tmpdir(), `omp-feishu-build-${process.pid}.js`);
 const compiled = spawnSync(bunBin, ["build", "--target=bun", "--external", "@oh-my-pi/pi-coding-agent", "--external", "typebox", "--external", "@larksuiteoapi/node-sdk", "--external", "qrcode-terminal", `--outfile=${buildTarget}`, join(extensionDir, "index.ts")], { cwd: packageRoot, encoding: "utf8" });
+try { rmSync(buildTarget, { force: true }); } catch {}
 if (compiled.status !== 0) fail(`Plugin compile check failed:\n${[compiled.stdout, compiled.stderr].join("\n")}`);
 ok("Plugin compile check passed");
 
@@ -158,38 +174,28 @@ if (!restart) {
 
 if (!existsSync(workspace)) fail(`Workspace does not exist: ${workspace}`);
 mkdirSync(runtimeDir, { recursive: true });
-await stopExistingDaemon(lockPath);
 
 const logPath = join(runtimeDir, "daemon.log");
-const logFd = openSync(logPath, "a");
-closeSync(logFd);
 const daemonArgs = ["--mode", "rpc", "--no-extensions", "--no-skills", "--allow-home", "--cwd", workspace, "-e", join(extensionDir, "index.ts")];
 const daemonExecutable = compatibleOmpCli ? bunBin : ompBin;
 const daemonLaunchArgs = compatibleOmpCli ? [compatibleOmpCli, ...daemonArgs] : daemonArgs;
-const daemonEnv = {
-  ...process.env,
-  PI_FEISHU_DAEMON: "1",
-  BUN_CONFIG_DNS_RESULT_ORDER: "ipv4first",
-  NODE_OPTIONS: [process.env.NODE_OPTIONS, "--dns-result-order=ipv4first"].filter(Boolean).join(" "),
-};
-
-if (isWindows) {
-  const launcherPath = join(runtimeDir, "start-daemon.cmd");
-  const quote = quoteCmd;
-  const command = [quote(daemonExecutable), ...daemonLaunchArgs.map(quote)].join(" ");
-  writeFileSync(launcherPath, `@echo off\r\nsetlocal DisableDelayedExpansion\r\nset PI_FEISHU_DAEMON=1\r\nset BUN_CONFIG_DNS_RESULT_ORDER=ipv4first\r\nset NODE_OPTIONS=--dns-result-order=ipv4first\r\ncd /d ${quote(workspace)}\r\npowershell.exe -NoProfile -Command "$event = [Threading.ManualResetEvent]::new($false); $event.WaitOne()" | ${command} >> ${quote(logPath)} 2>&1\r\n`);
-  const launched = spawn(process.env.ComSpec || "cmd.exe", ["/d", "/s", "/c", launcherPath], {
-    cwd: workspace,
-    detached: true,
-    env: daemonEnv,
-    stdio: "ignore",
-  });
-  launched.unref();
-} else {
-  const daemonLogFd = openSync(logPath, "a");
-  const launched = spawn(daemonExecutable, daemonLaunchArgs, { cwd: workspace, detached: true, env: daemonEnv, stdio: ["ignore", daemonLogFd, daemonLogFd] });
-  launched.unref();
-}
+const launched = spawn(bunBin, [
+  supervisorPath,
+  "--cwd", workspace,
+  "--log", logPath,
+  "--pid", supervisorPidPath,
+  "--stop", supervisorStopPath,
+  "--",
+  daemonExecutable,
+  ...daemonLaunchArgs,
+], {
+  cwd: workspace,
+  detached: true,
+  env: process.env,
+  stdio: "ignore",
+  windowsHide: true,
+});
+launched.unref();
 
 info(`Waiting for the Feishu gateway (up to ${timeoutSeconds} seconds)...`);
 if (await waitForConnected(lockPath, timeoutSeconds * 1000)) {
@@ -198,16 +204,12 @@ if (await waitForConnected(lockPath, timeoutSeconds * 1000)) {
   process.exit(0);
 }
 
+await stopExistingProcess(supervisorPidPath, supervisorStopPath);
 fail(`The daemon did not connect within ${timeoutSeconds} seconds. Read the log: ${logPath}`);
 
 function parsePositiveInt(value: string | undefined, fallback: number) {
   const parsed = Number.parseInt(value || "", 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-}
-
-function quoteCmd(value: string) {
-  const escaped = value.replace(/%/g, "%%").replace(/[\"^&|<>]/g, "^$&");
-  return `"${escaped}"`;
 }
 
 function validateInstallerConfig(value: Record<string, unknown> | undefined) {
@@ -251,6 +253,19 @@ async function stopExistingDaemon(path: string) {
     }
   }
   try { rmSync(path, { force: true, maxRetries: 3, retryDelay: 200 }); } catch {}
+}
+
+async function stopExistingProcess(pidPath: string, stopPath: string) {
+  if (!existsSync(pidPath)) return;
+  try {
+    const pid = Number.parseInt(readFileSync(pidPath, "utf8").trim(), 10);
+    if (Number.isSafeInteger(pid) && pid > 0 && processExists(pid)) {
+      writeFileSync(stopPath, `${Date.now()}\n`, "utf8");
+      await waitForProcessExit(pid, 10_000);
+    }
+  } catch {}
+  try { rmSync(pidPath, { force: true }); } catch {}
+  try { rmSync(stopPath, { force: true }); } catch {}
 }
 
 async function checkFeishuApp(value: Record<string, unknown> | undefined) {

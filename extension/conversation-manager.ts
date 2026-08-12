@@ -16,25 +16,15 @@ import { waitForPrompt } from "./prompt-timeout.js";
 import type { ResumeScope, ResumeSessionPage } from "./cards.js";
 import type { TaskStatusSink } from "./task-status-card.js";
 import type { FeishuState } from "./types.js";
+import type { FeishuRpcWorkerPool } from "./rpc-worker-pool.js";
 
 type ActiveRun = {
   session?: AgentSession;
+  rpcSessionId?: string;
   abort?: () => Promise<void> | void;
   runId?: string;
   stopped: boolean;
   status?: TaskStatusSink;
-};
-
-export type HostSessionRuntime = {
-  sendUserMessage(content: string | Array<{ type: "text"; text: string } | { type: "image"; data: string; mimeType: string }>): void;
-  setModel(model: any): Promise<boolean>;
-  getModel(): any | undefined;
-  abort(): void;
-};
-
-type HostPendingRun = {
-  key: string;
-  resolve: (messages: any[]) => void;
 };
 
 export type ConversationTimeouts = {
@@ -59,14 +49,13 @@ export class ConversationManager {
   private modelRegistryPromise: Promise<ModelRegistry> | undefined;
   private defaultProvider: string | undefined;
   private defaultModelId: string | undefined;
-  private hostPendingRun: HostPendingRun | undefined;
   private state: FeishuState;
 
   constructor(
     private readonly cwd: string,
     private readonly bridge?: FeishuBridgeRuntime,
     private readonly timeouts: ConversationTimeouts = {},
-    private readonly host?: HostSessionRuntime,
+    private readonly rpcWorkers?: FeishuRpcWorkerPool,
   ) {
     ensureRoot();
     this.state = readJson<FeishuState>(STATE_PATH, { sessions: {} });
@@ -100,7 +89,7 @@ export class ConversationManager {
     onReply: (text: string) => Promise<void>,
     status?: TaskStatusSink,
   ) {
-    if (this.host) return this.promptWithHostSession(key, userText, images, onReply, status);
+    if (this.rpcWorkers) return this.promptWithRpcWorker(key, userText, images, onReply, status);
     const previous = this.previousTurn(key);
     const next = previous.then(async () => {
       debugLog("feishu.prompt.start", { key, textLength: userText.length, imageCount: images.length });
@@ -189,6 +178,7 @@ export class ConversationManager {
         try { (await cached).dispose(); } catch {}
       }
       this.sessions.delete(key);
+      await this.rpcWorkers?.reset(key);
       delete this.state.sessions[key];
       writeJson(STATE_PATH, this.state);
       await onReply("已创建新会话。旧会话历史已保留，下一条消息会从新上下文开始。");
@@ -260,6 +250,7 @@ export class ConversationManager {
       }
 
       this.sessions.delete(key);
+      await this.rpcWorkers?.reset(key);
       this.state.sessions[key] = sessionPath;
       this.state.workspaces![key] = sessionInfo.cwd || this.cwd;
       writeJson(STATE_PATH, this.state);
@@ -282,11 +273,6 @@ export class ConversationManager {
       const model = modelRegistry.find(provider, modelId);
       if (!model || !modelRegistry.hasConfiguredAuth(model)) {
         await onReply(`这个模型当前不可用：${provider}/${modelId}。请发送 /model 重新选择。`);
-        return;
-      }
-
-      if (this.host && !(await this.host.setModel(model))) {
-        await onReply(`模型切换失败：${provider}/${modelId}。`);
         return;
       }
 
@@ -329,6 +315,7 @@ export class ConversationManager {
         try { (await cached).dispose(); } catch {}
       }
       this.sessions.delete(key);
+      await this.rpcWorkers?.reset(key);
       delete this.state.sessions[key];
       this.state.workspaces![key] = workspace;
       writeJson(STATE_PATH, this.state);
@@ -361,8 +348,6 @@ export class ConversationManager {
       const model = modelRegistry.find(selected.provider, selected.id);
       if (model && modelRegistry.hasConfiguredAuth(model)) return model;
     }
-    const hostModel = this.host?.getModel();
-    if (hostModel) return hostModel;
     if (includeCachedSession) {
       const cached = this.sessions.get(key);
       if (cached) {
@@ -405,6 +390,7 @@ export class ConversationManager {
   }
 
   resetMemory() {
+    void this.rpcWorkers?.disposeAll();
     for (const session of this.sessions.values()) {
       void session.then((s) => s.dispose()).catch(() => undefined);
     }
@@ -516,16 +502,7 @@ export class ConversationManager {
     return session;
   }
 
-  handleHostEvent(event: any) {
-    const pending = this.hostPendingRun;
-    if (!pending) return;
-    this.activeRuns.get(pending.key)?.status?.updateFromEvent(event);
-    if (event?.type !== "agent_end" || event.willContinue) return;
-    this.hostPendingRun = undefined;
-    pending.resolve(Array.isArray(event.messages) ? event.messages : []);
-  }
-
-  private async promptWithHostSession(
+  private async promptWithRpcWorker(
     key: string,
     userText: string,
     images: Array<{ type: "image"; data: string; mimeType: string }>,
@@ -534,43 +511,55 @@ export class ConversationManager {
   ) {
     const previous = this.previousTurn(key);
     const next = previous.then(async () => {
-      debugLog("feishu.host_prompt.start", { key, textLength: userText.length, imageCount: images.length });
-      const messages = await new Promise<any[]>((resolve, reject) => {
-        this.hostPendingRun = { key, resolve };
-        const run: ActiveRun = {
-          runId: status?.runId,
-          stopped: false,
-          status,
-          abort: () => this.host?.abort(),
-        };
-        this.activeRuns.set(key, run);
-        try {
-          const content = images.length
-            ? [{ type: "text" as const, text: userText }, ...images]
-            : userText;
-          this.host!.sendUserMessage(content);
-        } catch (error) {
-          this.hostPendingRun = undefined;
-          reject(error instanceof Error ? error : new Error(String(error)));
-        }
+      debugLog("feishu.rpc_prompt.start", { key, textLength: userText.length, imageCount: images.length });
+      const run: ActiveRun = { runId: status?.runId, stopped: false, status, abort: async () => { await this.rpcWorkers!.abort(key); } };
+      this.activeRuns.set(key, run);
+      const model = await this.resolveSelectedModel(key, false);
+      let sessionId: string | undefined;
+      const result = await this.rpcWorkers!.prompt(key, {
+        cwd: this.getWorkspace(key),
+        sessionFile: this.state.sessions[key],
+        model: model ? { provider: model.provider, id: model.id } : undefined,
+        text: userText,
+        images,
+        timeoutMs: this.hardTimeoutMs() || 24 * 60 * 60 * 1000,
+        status,
+        onSessionReady: (id) => {
+          sessionId = id;
+          run.rpcSessionId = id;
+          this.bridge?.attachSession(key, id);
+          this.bridge?.beginFeishuInput(id);
+        },
+        onSessionEvent: (id, event) => {
+          if (event?.type === "message_end") this.bridge?.handleMessageEnd(id, key, event.message);
+        },
       });
-      const run = this.activeRuns.get(key);
-      this.activeRuns.delete(key);
-      if (run?.stopped) return;
-      const { text: answer, error: modelError } = extractLastAssistantOutcomeFromMessages(messages);
-      debugLog("feishu.host_prompt.done", { key, answerLength: answer.length, modelError });
-      if (!answer && modelError) {
-        await onReply(`模型调用失败：${modelError}`);
-        await status?.finish("failed", modelError);
+      if (sessionId) this.bridge?.endFeishuInput(sessionId);
+      if (this.activeRuns.get(key) === run) this.activeRuns.delete(key);
+      if (run.stopped) return;
+      if (result.sessionFile && this.state.sessions[key] !== result.sessionFile) {
+        this.state.sessions[key] = result.sessionFile;
+        writeJson(STATE_PATH, this.state);
+      }
+      const answer = result.text;
+      debugLog("feishu.rpc_prompt.done", { key, answerLength: answer.length, modelError: result.error });
+      if (!answer && result.error) {
+        await onReply(`模型调用失败：${result.error}`);
+        await status?.finish("failed", result.error);
         return;
       }
       await onReply(answer || "No response.");
       await status?.finish("done");
     }).catch(async (error) => {
-      this.hostPendingRun = undefined;
+      const active = this.activeRuns.get(key);
+      if (active?.rpcSessionId) this.bridge?.endFeishuInput(active.rpcSessionId);
       this.activeRuns.delete(key);
+      if (active?.stopped) {
+        debugLog("feishu.rpc_prompt.stopped", { key });
+        return;
+      }
       const message = error instanceof Error ? error.message : String(error);
-      debugLog("feishu.host_prompt.error", { key, error: message });
+      debugLog("feishu.rpc_prompt.error", { key, error: message });
       await status?.finish("failed", message);
       await onReply(`Pi error: ${message}`);
     });

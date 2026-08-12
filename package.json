@@ -26,7 +26,7 @@
     "src/cli.ts",
     "extension/**/*.ts",
     "tests/**/*.mjs",
-    "support/feishu-watcher.mjs",
+    "support/feishu-supervisor.mjs",
     "tsconfig.json",
     "README.md",
     "LICENSE"

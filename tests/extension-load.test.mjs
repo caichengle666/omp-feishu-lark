@@ -46,12 +46,12 @@ test("keeps refresh non-destructive and handles atomic model-file replacement", 
   assert.match(source, /filename\.toString\(\) !== modelsName/);
 });
 
-test("starts the detached Feishu gateway without routing Windows through WSL", () => {
+test("starts the detached Feishu gateway through the shared cross-platform supervisor", () => {
   const source = readFileSync(extensionPath, "utf8");
-  assert.match(source, /process\.platform === "win32"/);
-  assert.match(source, /process\.env\.ComSpec \|\| "cmd\.exe"/);
+  assert.match(source, /feishu-supervisor\.mjs/);
+  assert.match(source, /"--stop", SUPERVISOR_STOP_PATH/);
   assert.match(source, /waitForGatewayConnection\(15_000\)/);
-  assert.match(source, /else \{\s+const logFd = openSync[\s\S]+spawn\("bash"/);
+  assert.doesNotMatch(source, /powershell|tail -f|spawn\("bash"/i);
 });
 
 test("passes the resolved model into the Feishu OMP session without awaiting its own cache", () => {

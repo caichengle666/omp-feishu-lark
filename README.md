@@ -7,8 +7,8 @@ self-contained installer.
 Upstream targets `@earendil-works/pi-coding-agent`; on the newer SDK the plugin
 fails to load (`Export named 'ModelRuntime' not found`). The `extension/` files
 here are upstream sources with the adapter layer rewritten — see
-[Patches in this build](#patches-in-this-build). `install.sh` and
-`support/feishu-watcher.mjs` are new.
+[Patches in this build](#patches-in-this-build). The Bun installer and
+`support/feishu-supervisor.mjs` are included.
 
 All credit for the plugin itself goes to the upstream author. Bugs in the
 patches are not upstream's problem; report plugin bugs upstream and packaging
@@ -22,7 +22,7 @@ Install Bun and omp first, then run this once. Nothing else afterwards.
 bunx @caichengle/omp-feishu-lark
 ```
 
-The Bun installer supports Windows and Linux. It installs runtime state under
+The Bun installer supports Windows, Linux, and macOS. It installs runtime state under
 `~/.omp`, uses the package-compatible OMP CLI, migrates an existing legacy
 `~/.pi/agent/feishu/config.json`, and waits until the gateway reports
 `connected`.
@@ -36,26 +36,10 @@ bunx @caichengle/omp-feishu-lark --no-restart
 bunx @caichengle/omp-feishu-lark --workspace DIR
 ```
 
-For an offline tarball install:
-
-```bash
-tar xzf pi-feishu-plugin-patched-20260808-005848.tar.gz
-cd pi-feishu-plugin-patched-20260808-005848
-./install.sh
-```
-
-It resolves `bun`/`omp` off PATH, installs `@larksuiteoapi/node-sdk` into
-`~/.omp/plugins` when missing, asks for credentials, starts the daemon, and
+It resolves `bun`/`omp` off PATH, installs runtime dependencies inside the
+plugin directory, asks for credentials, starts the daemon, and
 exits once the gateway reports `connected`. At that point the bot answers in
 Feishu.
-
-```
-./install.sh                     # default dir ~/.pi/extensions/feishu
-./install.sh /path/to/feishu     # explicit plugin dir
-./install.sh --reconfigure       # re-enter credentials over an existing config
-./install.sh --no-restart        # install sources only, leave the daemon alone
-./install.sh --workspace DIR     # override the daemon's default workspace
-```
 
 Every path derives from `$HOME`, so a non-root install works unchanged.
 
@@ -84,8 +68,7 @@ The daemon is launched with `--cwd <workspace> --allow-home`. Both matter:
 omp auto-relocates to a temp dir when started in a bare home, and the cwd is
 the default workspace for new sessions. The workspace is derived from
 `PLUGIN_DIR` (`<root>/.pi/extensions/feishu` → `<root>`), never inherited from
-wherever the installer happened to run — unpacking to a temp dir and deleting
-it would otherwise strand every session. The watcher applies the same rule.
+wherever the installer happened to run.
 
 `PI_FEISHU_DAEMON=1` is set on the launch so the plugin does not autostart a
 second daemon on top of the one the installer just started.
@@ -135,18 +118,12 @@ Tencent as a short Chinese voice message; the resulting text is then handled
 like a normal prompt. Without these variables, text, image, and file messages
 continue to work normally and voice messages receive a configuration error.
 
-Prompts read from stdin, so a scripted install works too:
-
-```bash
-printf 'cli_xxx\nsecret\nfeishu\nopen\n' | ./install.sh
-```
-
 ## Contents
 
 ```
-extension/   20 plugin .ts sources (4 patched, 16 untouched)
-support/     feishu-watcher.mjs — hot-reload watcher
-install.sh   interactive setup + restore + restart + verify
+extension/   Feishu/Lark plugin sources
+support/     feishu-supervisor.mjs — cross-platform daemon supervisor
+src/cli.ts   interactive install + configure + restart + verify
 ```
 
 ## What is NOT in this package
@@ -220,17 +197,19 @@ long-lived daemon's cached registry.
 `warmupModels()` primes the `ModelRegistry` during daemon startup so the first
 `/model` command does not block on provider discovery timeouts.
 
-### 7. Real watcher restarts (`support/feishu-watcher.mjs`)
+### 7. Cross-platform daemon supervisor (`support/feishu-supervisor.mjs`)
 
-The previous `doRestart()` spawned a one-shot RPC session running
-`-p "/feishu restart"`. It logged success while the daemon pid never changed —
-the reload silently did nothing. It now manages the process directly: SIGKILL
-the locked pid, delete `locks.json`, respawn, and poll the lock until
-`connected` (60s cap).
+The installer and `/feishu start|restart|stop` use the same Bun supervisor on
+Windows, Linux, and macOS. It starts OMP without a shell, keeps RPC stdin open,
+restarts crashed daemons with capped exponential backoff, and shuts down through
+a portable control file before upgrades replace plugin files.
 
-Note the spawn keeps stdin open via `tail -f /dev/null | exec omp --mode rpc …`.
-RPC mode exits immediately on stdin EOF; without the pipe the daemon dies at
-startup.
+### 8. Isolated concurrent conversations (`rpc-worker-pool.ts`)
+
+Each Feishu conversation owns a separate OMP RPC worker, session file, model,
+abort target, and prompt queue. Different conversations run concurrently while
+messages in the same conversation remain ordered. Idle workers are reclaimed
+and restored from their saved session files when needed.
 
 ## Provider reliability
 
@@ -250,5 +229,5 @@ tail -f ~/.omp/agent/feishu/debug.log
 
 MIT — see [LICENSE](LICENSE). The plugin sources under `extension/` originate
 from [AX1202/pi-feishu-lark](https://github.com/AX1202/pi-feishu-lark) and
-remain under their original MIT terms; the patches, `install.sh`, and
-`support/feishu-watcher.mjs` are released under the same license.
+remain under their original MIT terms; the patches, Bun installer, and
+`support/feishu-supervisor.mjs` are released under the same license.
