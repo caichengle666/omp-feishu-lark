@@ -1,0 +1,47 @@
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import test from "node:test";
+import { fileURLToPath } from "node:url";
+
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const extensionPath = join(repoRoot, "extension", "index.ts");
+const conversationManagerPath = join(repoRoot, "extension", "conversation-manager.ts");
+
+test("compiles against the OMP 17 extension boundary", () => {
+  const result = spawnSync(process.execPath, [
+    "build",
+    "--target=bun",
+    "--external",
+    "@oh-my-pi/pi-coding-agent",
+    "--external",
+    "@larksuiteoapi/node-sdk",
+    "--external",
+    "qrcode-terminal",
+    "--outfile=/dev/null",
+    extensionPath,
+  ], {
+    cwd: repoRoot,
+    encoding: "utf8",
+    timeout: 30_000,
+  });
+
+  const output = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
+  assert.equal(result.status, 0, output || `bun exited via ${result.signal || "unknown signal"}`);
+});
+
+test("uses the OMP 17 ModelRegistry adapter", () => {
+  const source = readFileSync(conversationManagerPath, "utf8");
+  assert.match(source, /from "@oh-my-pi\/pi-coding-agent"/);
+  assert.match(source, /ModelRegistry/);
+  assert.match(source, /discoverAuthStorage/);
+  assert.doesNotMatch(source, /@earendil-works\/pi-coding-agent/);
+});
+
+test("keeps refresh non-destructive and handles atomic model-file replacement", () => {
+  const source = readFileSync(extensionPath, "utf8");
+  assert.doesNotMatch(source, /cmd === "refresh"[\s\S]{0,200}resetMemory/);
+  assert.match(source, /watch\(dirname\(modelsPath\)/);
+  assert.match(source, /filename\.toString\(\) !== modelsName/);
+});

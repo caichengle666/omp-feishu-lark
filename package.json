@@ -1,0 +1,60 @@
+{
+  "name": "@caichengle/omp-feishu-lark",
+  "version": "0.3.1",
+  "description": "Feishu/Lark bridge for Pi coding agent — chat with Pi from Feishu or Lark",
+  "type": "module",
+  "license": "MIT",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "feishu",
+    "lark",
+    "extension"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "bin": {
+    "omp-feishu": "src/cli.ts"
+  },
+  "omp": {
+    "extensions": [
+      "extension/index.ts"
+    ]
+  },
+  "files": [
+    "src/cli.ts",
+    "extension/**/*.ts",
+    "tests/**/*.mjs",
+    "support/feishu-watcher.mjs",
+    "README.md",
+    "LICENSE"
+  ],
+  "dependencies": {
+    "@larksuiteoapi/node-sdk": "^1.73.0",
+    "qrcode-terminal": "^0.12.0"
+  },
+  "peerDependencies": {
+    "@oh-my-pi/pi-coding-agent": "^17.2.12",
+    "typebox": "^1.3.12"
+  },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "bun test tests",
+    "prepublishOnly": "bun run check && bun test tests"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.14",
+    "@types/node": "^26.2.0",
+    "@types/qrcode-terminal": "^0.12.2",
+    "typescript": "5.9.2"
+  },
+  "peerDependenciesMeta": {
+    "@oh-my-pi/pi-coding-agent": {
+      "optional": true
+    },
+    "typebox": {
+      "optional": true
+    }
+  }
+}
