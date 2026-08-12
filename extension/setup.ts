@@ -99,31 +99,71 @@ async function registerFeishuApp(ctx: ExtensionCommandContext): Promise<{ appId:
   const lark = await import("@larksuiteoapi/node-sdk");
   ctx.ui.notify("正在准备飞书授权二维码... / Preparing Feishu authorization QR code...", "info");
 
-  const result = await lark.registerApp({
-    source: "pi-feishu-extension",
-    onQRCodeReady(info: { url: string; expireIn: number }) {
-      qrcode.generate(info.url, { small: true }, (qr) => {
-        console.log("\n飞书/Lark 授权二维码 / Feishu/Lark authorization QR code");
-        console.log(qr);
-        console.log(info.url);
-        console.log(`二维码 ${info.expireIn} 秒后过期 / QR code expires in ${info.expireIn} seconds.`);
-      });
-      ctx.ui.notify(
-        "请在终端扫描二维码，或打开终端中显示的链接。 / Scan the QR code in terminal, or open the link printed there.",
-        "info",
-      );
-    },
-    onStatusChange(info: any) {
-      if (info?.status === "domain_switched") {
-        ctx.ui.notify("检测到 Lark 租户，正在切换区域。 / Detected Lark tenant; switching domain.", "info");
-      }
-    },
-  });
+  let closeQRCode = () => {};
+  let result: any;
+  try {
+    result = await lark.registerApp({
+      source: "pi-feishu-extension",
+      onQRCodeReady(info: { url: string; expireIn: number }) {
+        closeQRCode();
+        closeQRCode = showAuthorizationQRCode(ctx, info.url);
+        ctx.ui.notify(
+          `请扫描二维码完成授权，${info.expireIn} 秒后过期。 / Scan the QR code to authorize; expires in ${info.expireIn} seconds.`,
+          "info",
+        );
+      },
+      onStatusChange(info: any) {
+        if (info?.status === "domain_switched") {
+          ctx.ui.notify("检测到 Lark 租户，正在切换区域。 / Detected Lark tenant; switching domain.", "info");
+        }
+      },
+    });
+  } finally {
+    closeQRCode();
+  }
 
   const domain: Domain = result?.user_info?.tenant_brand === "lark" ? "lark" : "feishu";
   return {
     appId: result.client_id,
     appSecret: result.client_secret,
     domain,
+  };
+}
+
+export function showAuthorizationQRCode(ctx: ExtensionCommandContext, url: string): () => void {
+  let qr = "";
+  qrcode.generate(url, { small: true }, (output) => {
+    qr = output;
+  });
+  const lines = qr.split("\n");
+  const qrWidth = Math.max(...lines.map((line) => line.length));
+  let close: (() => void) | undefined;
+  let closed = false;
+
+  void ctx.ui.custom<void>((tui, _theme, _keybindings, done) => {
+    close = () => done();
+    if (closed) close();
+    return {
+      render(width: number): readonly string[] {
+        const padding = " ".repeat(Math.max(0, Math.floor((width - qrWidth) / 2)));
+        return lines.map((line) => `${padding}${line}`);
+      },
+      invalidate() {},
+    };
+  }, {
+    overlay: true,
+    overlayOptions: {
+      anchor: "center",
+      width: "100%",
+      maxHeight: "100%",
+      margin: 0,
+      fullscreen: true,
+      mouseTracking: false,
+    },
+  });
+
+  return () => {
+    closed = true;
+    close?.();
   };
 }
