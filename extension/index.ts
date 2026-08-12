@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, openSync, readFileSync, rmSync, statSync, watch } from "node:fs";
+import { existsSync, mkdirSync, openSync, readFileSync, rmSync, statSync, watch, writeFileSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -240,6 +240,11 @@ export default function feishuExtension(pi: ExtensionAPI) {
     return `'${value.replace(/'/g, `'\\''`)}'`;
   }
 
+  function quoteCmd(value: string) {
+    const escaped = value.replace(/%/g, "%%").replace(/[\"^&|<>]/g, "^$&");
+    return `"${escaped}"`;
+  }
+
   function daemonSpec() {
     const extensionPath = fileURLToPath(import.meta.url);
     const piBin = process.env.PI_BIN || "omp";
@@ -282,17 +287,44 @@ export default function feishuExtension(pi: ExtensionAPI) {
 
       reapDetachedDaemonProcesses({ keepPids: [process.pid] });
       ensureRoot();
-      const logFd = openSync(DAEMON_LOG_PATH, "a");
-      const child = spawn("bash", ["-lc", daemonCommand()], {
-        detached: true,
-        cwd: process.cwd(),
-        env: { ...process.env, PI_FEISHU_DAEMON: "1" },
-        stdio: ["ignore", logFd, logFd],
-      });
+      const spec = daemonSpec();
+      const daemonEnv = {
+        ...process.env,
+        PI_FEISHU_DAEMON: "1",
+        BUN_CONFIG_DNS_RESULT_ORDER: "ipv4first",
+        NODE_OPTIONS: [process.env.NODE_OPTIONS, "--dns-result-order=ipv4first"].filter(Boolean).join(" "),
+      };
+      let child;
+      if (process.platform === "win32") {
+        const launcherPath = join(dirname(DAEMON_LOG_PATH), "start-daemon.cmd");
+        const command = [quoteCmd(spec.piBin), ...spec.args.map(quoteCmd)].join(" ");
+        writeFileSync(
+          launcherPath,
+          `@echo off\r\nsetlocal DisableDelayedExpansion\r\nset PI_FEISHU_DAEMON=1\r\nset BUN_CONFIG_DNS_RESULT_ORDER=ipv4first\r\nset NODE_OPTIONS=--dns-result-order=ipv4first\r\ncd /d ${quoteCmd(process.cwd())}\r\npowershell.exe -NoProfile -Command "$event = [Threading.ManualResetEvent]::new($false); $event.WaitOne()" | ${command} >> ${quoteCmd(DAEMON_LOG_PATH)} 2>&1\r\n`,
+        );
+        child = spawn(process.env.ComSpec || "cmd.exe", ["/d", "/s", "/c", launcherPath], {
+          detached: true,
+          cwd: process.cwd(),
+          env: daemonEnv,
+          stdio: "ignore",
+          windowsHide: true,
+        });
+      } else {
+        const logFd = openSync(DAEMON_LOG_PATH, "a");
+        child = spawn("bash", ["-lc", daemonCommand()], {
+          detached: true,
+          cwd: process.cwd(),
+          env: daemonEnv,
+          stdio: ["ignore", logFd, logFd],
+        });
+      }
       child.unref();
 
-      await sleep(1500);
-      return { status: "started" as const, pid: child.pid, owner: readGatewayOwner() };
+      const connectedOwner = await waitForGatewayConnection(15_000);
+      if (!connectedOwner) {
+        throw new Error(`Feishu gateway did not connect. Read the log: ${DAEMON_LOG_PATH}`);
+      }
+      return { status: "started" as const, pid: connectedOwner.pid, owner: connectedOwner };
     });
   }
 
@@ -597,6 +629,16 @@ function terminateLauncherParent() {
   if (!line) return;
   if (!line.includes("tail -f /dev/null") || !line.includes("feishu/index.ts")) return;
   try { process.kill(parentPid, "SIGTERM"); } catch {}
+}
+
+async function waitForGatewayConnection(timeoutMs: number) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const owner = readGatewayOwner();
+    if (owner?.status === "connected") return owner;
+    await sleep(250);
+  }
+  return undefined;
 }
 
 async function withDaemonSpawnLock<T>(fn: () => Promise<T>): Promise<T> {

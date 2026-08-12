@@ -451,9 +451,8 @@ export class ConversationManager {
     const workspaceCwd = this.getWorkspace(key);
     ensureWorkspaceExists(workspaceCwd);
     const existingFile = this.state.sessions[key];
-    const selected = this.state.models?.[key];
     const modelRegistry = await this.getModelRegistry();
-    const model = selected ? modelRegistry.find(selected.provider, selected.id) : undefined;
+    const model = await this.getSelectedModel(key);
     const sessionManager = existingFile && existsSync(existingFile)
       ? await SessionManager.open(existingFile, undefined, undefined, { initialCwd: workspaceCwd })
       : SessionManager.create(workspaceCwd);

@@ -45,3 +45,17 @@ test("keeps refresh non-destructive and handles atomic model-file replacement", 
   assert.match(source, /watch\(dirname\(modelsPath\)/);
   assert.match(source, /filename\.toString\(\) !== modelsName/);
 });
+
+test("starts the detached Feishu gateway without routing Windows through WSL", () => {
+  const source = readFileSync(extensionPath, "utf8");
+  assert.match(source, /process\.platform === "win32"/);
+  assert.match(source, /process\.env\.ComSpec \|\| "cmd\.exe"/);
+  assert.match(source, /waitForGatewayConnection\(15_000\)/);
+  assert.match(source, /else \{\s+const logFd = openSync[\s\S]+spawn\("bash"/);
+});
+
+test("passes the resolved model into the Feishu OMP session", () => {
+  const source = readFileSync(conversationManagerPath, "utf8");
+  assert.match(source, /const model = await this\.getSelectedModel\(key\);/);
+  assert.doesNotMatch(source, /const model = selected \?/);
+});
