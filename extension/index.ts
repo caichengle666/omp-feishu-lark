@@ -21,14 +21,21 @@ import type { FeishuConfig, FeishuStatus } from "./types.js";
 export default function feishuExtension(pi: ExtensionAPI) {
   let transport: FeishuTransport | undefined;
   let gatewayLock: GatewayLockHandle | undefined;
+  let hostContext: any;
   const bridgeStore = new FeishuBridgeStore();
   const delivery = new FeishuDelivery(() => transport);
   const bridge = new FeishuBridgeRuntime(bridgeStore, delivery);
   const bootConfig = loadConfig();
+  const hostRuntime = process.env.PI_FEISHU_DAEMON === "1" ? {
+    sendUserMessage: (content: any) => pi.sendUserMessage(content),
+    setModel: (model: any) => pi.setModel(model),
+    getModel: () => hostContext?.model,
+    abort: () => hostContext?.abort(),
+  } : undefined;
   const conversations = new ConversationManager(process.cwd(), bridge, {
     promptNotifySec: bootConfig?.promptNotifySec,
     promptTimeoutSec: bootConfig?.promptTimeoutSec,
-  });
+  }, hostRuntime);
   const messageHandler = new FeishuMessageHandler(conversations, () => transport, bridgeStore);
 
   const STATUS_KEY = "feishu-connection";
@@ -108,7 +115,41 @@ export default function feishuExtension(pi: ExtensionAPI) {
     uiRef?.setStatus?.(STATUS_KEY, undefined);
   }
 
+  pi.on("session_start", async (event, ctx) => {
+    hostContext = ctx;
+  });
+
+  pi.on("agent_start", async (event, ctx) => {
+    hostContext = ctx;
+    conversations.handleHostEvent(event);
+  });
+  pi.on("turn_start", async (event, ctx) => {
+    hostContext = ctx;
+    conversations.handleHostEvent(event);
+  });
+  pi.on("message_start", async (event, ctx) => {
+    hostContext = ctx;
+    conversations.handleHostEvent(event);
+  });
+  pi.on("message_update", async (event, ctx) => {
+    hostContext = ctx;
+    conversations.handleHostEvent(event);
+  });
+  pi.on("tool_execution_start", async (event, ctx) => {
+    hostContext = ctx;
+    conversations.handleHostEvent(event);
+  });
+  pi.on("tool_execution_end", async (event, ctx) => {
+    hostContext = ctx;
+    conversations.handleHostEvent(event);
+  });
+  pi.on("agent_end", async (event, ctx) => {
+    hostContext = ctx;
+    conversations.handleHostEvent(event);
+  });
   pi.on("message_end", async (event, ctx) => {
+    hostContext = ctx;
+    conversations.handleHostEvent(event);
     bridge.handleMessageEnd(ctx.sessionManager.getSessionId(), undefined, event.message);
   });
 

@@ -18,10 +18,23 @@ import type { TaskStatusSink } from "./task-status-card.js";
 import type { FeishuState } from "./types.js";
 
 type ActiveRun = {
-  session: AgentSession;
+  session?: AgentSession;
+  abort?: () => Promise<void> | void;
   runId?: string;
   stopped: boolean;
   status?: TaskStatusSink;
+};
+
+export type HostSessionRuntime = {
+  sendUserMessage(content: string | Array<{ type: "text"; text: string } | { type: "image"; data: string; mimeType: string }>): void;
+  setModel(model: any): Promise<boolean>;
+  getModel(): any | undefined;
+  abort(): void;
+};
+
+type HostPendingRun = {
+  key: string;
+  resolve: (messages: any[]) => void;
 };
 
 export type ConversationTimeouts = {
@@ -46,12 +59,14 @@ export class ConversationManager {
   private modelRegistryPromise: Promise<ModelRegistry> | undefined;
   private defaultProvider: string | undefined;
   private defaultModelId: string | undefined;
+  private hostPendingRun: HostPendingRun | undefined;
   private state: FeishuState;
 
   constructor(
     private readonly cwd: string,
     private readonly bridge?: FeishuBridgeRuntime,
     private readonly timeouts: ConversationTimeouts = {},
+    private readonly host?: HostSessionRuntime,
   ) {
     ensureRoot();
     this.state = readJson<FeishuState>(STATE_PATH, { sessions: {} });
@@ -85,6 +100,7 @@ export class ConversationManager {
     onReply: (text: string) => Promise<void>,
     status?: TaskStatusSink,
   ) {
+    if (this.host) return this.promptWithHostSession(key, userText, images, onReply, status);
     const previous = this.previousTurn(key);
     const next = previous.then(async () => {
       debugLog("feishu.prompt.start", { key, textLength: userText.length, imageCount: images.length });
@@ -150,7 +166,8 @@ export class ConversationManager {
     active.stopped = true;
     await active.status?.stopImmediately("用户已停止任务");
     try {
-      await active.session.abort();
+      if (active.abort) await active.abort();
+      else await active.session?.abort();
       debugLog("feishu.prompt.abort", { key });
       const message = "已停止当前处理。";
       await onReply(message);
@@ -268,6 +285,11 @@ export class ConversationManager {
         return;
       }
 
+      if (this.host && !(await this.host.setModel(model))) {
+        await onReply(`模型切换失败：${provider}/${modelId}。`);
+        return;
+      }
+
       this.state.models![key] = { provider, id: modelId };
       writeJson(STATE_PATH, this.state);
 
@@ -339,6 +361,8 @@ export class ConversationManager {
       const model = modelRegistry.find(selected.provider, selected.id);
       if (model && modelRegistry.hasConfiguredAuth(model)) return model;
     }
+    const hostModel = this.host?.getModel();
+    if (hostModel) return hostModel;
     if (includeCachedSession) {
       const cached = this.sessions.get(key);
       if (cached) {
@@ -492,6 +516,68 @@ export class ConversationManager {
     return session;
   }
 
+  handleHostEvent(event: any) {
+    const pending = this.hostPendingRun;
+    if (!pending) return;
+    this.activeRuns.get(pending.key)?.status?.updateFromEvent(event);
+    if (event?.type !== "agent_end" || event.willContinue) return;
+    this.hostPendingRun = undefined;
+    pending.resolve(Array.isArray(event.messages) ? event.messages : []);
+  }
+
+  private async promptWithHostSession(
+    key: string,
+    userText: string,
+    images: Array<{ type: "image"; data: string; mimeType: string }>,
+    onReply: (text: string) => Promise<void>,
+    status?: TaskStatusSink,
+  ) {
+    const previous = this.previousTurn(key);
+    const next = previous.then(async () => {
+      debugLog("feishu.host_prompt.start", { key, textLength: userText.length, imageCount: images.length });
+      const messages = await new Promise<any[]>((resolve, reject) => {
+        this.hostPendingRun = { key, resolve };
+        const run: ActiveRun = {
+          runId: status?.runId,
+          stopped: false,
+          status,
+          abort: () => this.host?.abort(),
+        };
+        this.activeRuns.set(key, run);
+        try {
+          const content = images.length
+            ? [{ type: "text" as const, text: userText }, ...images]
+            : userText;
+          this.host!.sendUserMessage(content);
+        } catch (error) {
+          this.hostPendingRun = undefined;
+          reject(error instanceof Error ? error : new Error(String(error)));
+        }
+      });
+      const run = this.activeRuns.get(key);
+      this.activeRuns.delete(key);
+      if (run?.stopped) return;
+      const { text: answer, error: modelError } = extractLastAssistantOutcomeFromMessages(messages);
+      debugLog("feishu.host_prompt.done", { key, answerLength: answer.length, modelError });
+      if (!answer && modelError) {
+        await onReply(`模型调用失败：${modelError}`);
+        await status?.finish("failed", modelError);
+        return;
+      }
+      await onReply(answer || "No response.");
+      await status?.finish("done");
+    }).catch(async (error) => {
+      this.hostPendingRun = undefined;
+      this.activeRuns.delete(key);
+      const message = error instanceof Error ? error.message : String(error);
+      debugLog("feishu.host_prompt.error", { key, error: message });
+      await status?.finish("failed", message);
+      await onReply(`Pi error: ${message}`);
+    });
+    this.queues.set(key, next);
+    await next;
+  }
+
   private async getResumeSessions(key: string, scope: ResumeScope) {
     const base = scope === "all"
       ? await SessionManager.listAll()
@@ -549,8 +635,12 @@ function extractTextContent(content: unknown): string {
 }
 
 function extractLastAssistantOutcome(session: AgentSession): { text: string; error?: string } {
-  for (let i = session.messages.length - 1; i >= 0; i--) {
-    const msg = session.messages[i];
+  return extractLastAssistantOutcomeFromMessages(session.messages);
+}
+
+function extractLastAssistantOutcomeFromMessages(messages: readonly any[]): { text: string; error?: string } {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
     if (!msg || msg.role !== "assistant") continue;
     // Provider failures are recorded on the message, not thrown, so an empty
     // turn must surface `errorMessage` instead of a bare "No response.".
