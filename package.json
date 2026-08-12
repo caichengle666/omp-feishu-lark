@@ -27,6 +27,7 @@
     "extension/**/*.ts",
     "tests/**/*.mjs",
     "support/feishu-watcher.mjs",
+    "tsconfig.json",
     "README.md",
     "LICENSE"
   ],
