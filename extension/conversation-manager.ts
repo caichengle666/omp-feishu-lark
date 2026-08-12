@@ -329,15 +329,21 @@ export class ConversationManager {
   }
 
   async getSelectedModel(key: string) {
+    return this.resolveSelectedModel(key, true);
+  }
+
+  private async resolveSelectedModel(key: string, includeCachedSession: boolean) {
     const modelRegistry = await this.getModelRegistry();
     const selected = this.state.models?.[key];
     if (selected) {
       const model = modelRegistry.find(selected.provider, selected.id);
       if (model && modelRegistry.hasConfiguredAuth(model)) return model;
     }
-    const cached = this.sessions.get(key);
-    if (cached) {
-      return (await cached).model;
+    if (includeCachedSession) {
+      const cached = this.sessions.get(key);
+      if (cached) {
+        return (await cached).model;
+      }
     }
     // Check settings default model before falling back to first available
     if (this.defaultProvider && this.defaultModelId) {
@@ -452,7 +458,9 @@ export class ConversationManager {
     ensureWorkspaceExists(workspaceCwd);
     const existingFile = this.state.sessions[key];
     const modelRegistry = await this.getModelRegistry();
-    const model = await this.getSelectedModel(key);
+    // getSession() caches the createSession() promise before this method runs.
+    // Reading that cache here would await the promise currently being created.
+    const model = await this.resolveSelectedModel(key, false);
     const sessionManager = existingFile && existsSync(existingFile)
       ? await SessionManager.open(existingFile, undefined, undefined, { initialCwd: workspaceCwd })
       : SessionManager.create(workspaceCwd);

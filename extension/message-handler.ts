@@ -134,13 +134,16 @@ export class FeishuMessageHandler {
     }
 
     if (command.name === "model") {
+      debugLog("feishu.command.model.start", { messageId: msg.messageId, key });
       const models = await this.conversations.getAvailableModels();
+      debugLog("feishu.command.model.models_loaded", { messageId: msg.messageId, key, count: models.length });
       if (!models.length) {
         await transport.replyText(msg.messageId, "当前没有可用模型。请先在 Pi 里完成模型登录或 API Key 配置。");
         return true;
       }
       const currentModel = await this.conversations.getSelectedModel(key);
       await transport.replyCard(msg.messageId, buildModelCard(key, models, currentModel));
+      debugLog("feishu.command.model.replied", { messageId: msg.messageId, key });
       return true;
     }
 

@@ -54,8 +54,8 @@ test("starts the detached Feishu gateway without routing Windows through WSL", (
   assert.match(source, /else \{\s+const logFd = openSync[\s\S]+spawn\("bash"/);
 });
 
-test("passes the resolved model into the Feishu OMP session", () => {
+test("passes the resolved model into the Feishu OMP session without awaiting its own cache", () => {
   const source = readFileSync(conversationManagerPath, "utf8");
-  assert.match(source, /const model = await this\.getSelectedModel\(key\);/);
+  assert.match(source, /const model = await this\.resolveSelectedModel\(key, false\);/);
   assert.doesNotMatch(source, /const model = selected \?/);
 });

@@ -64,3 +64,23 @@ test("stopConversation reports abort failures and restores the run state", async
   assert.equal(manager.activeRuns.get("chat").stopped, false);
   assert.deepEqual(replies, ["停止失败，请重试。"]);
 });
+
+test("new session model resolution does not await its own cached creation promise", async () => {
+  const manager = new ConversationManager(process.cwd());
+  const defaultModel = { provider: "oc2", id: "deepseek-v4-flash-free" };
+  manager.defaultProvider = defaultModel.provider;
+  manager.defaultModelId = defaultModel.id;
+  manager.modelRegistryPromise = Promise.resolve({
+    find: (provider, id) => provider === defaultModel.provider && id === defaultModel.id ? defaultModel : undefined,
+    hasConfiguredAuth: (model) => model === defaultModel,
+    getAvailable: () => [defaultModel],
+  });
+  manager.sessions.set("chat", new Promise(() => {}));
+
+  const result = await Promise.race([
+    manager.resolveSelectedModel("chat", false),
+    new Promise((_, reject) => setTimeout(() => reject(new Error("model resolution deadlocked")), 250)),
+  ]);
+
+  assert.equal(result, defaultModel);
+});
