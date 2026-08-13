@@ -339,6 +339,13 @@ export default function feishuExtension(pi: ExtensionAPI) {
 
   pi.registerCommand("feishu", {
     description: "Feishu/Lark: setup, start, stop, restart, status, debug, autostart, reset",
+    getArgumentCompletions: (prefix) => {
+      const commands = ["setup", "start", "stop", "restart", "refresh", "status", "debug", "autostart", "reset"];
+      const query = prefix.trim().toLowerCase();
+      return commands
+        .filter((command) => command.startsWith(query))
+        .map((value) => ({ value, label: value }));
+    },
     handler: async (args, ctx) => {
       uiRef = ctx.ui as any;
       const [cmdRaw] = args.trim().toLowerCase().split(/\s+/, 1);

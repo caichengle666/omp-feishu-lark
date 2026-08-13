@@ -89,3 +89,11 @@ test("documents the actual config and model-file ownership", () => {
   assert.match(readme, /`\/feishu setup`/);
   assert.match(readme, /does not overwrite `models\.yml`/);
 });
+
+test("registers OMP argument completions for /feishu subcommands", () => {
+  const source = readFileSync(extensionPath, "utf8");
+  assert.match(source, /getArgumentCompletions: \(prefix\)/);
+  assert.match(source, /setup.*start.*stop.*restart.*refresh.*status.*debug.*autostart.*reset/s);
+  assert.match(source, /const cmd = cmdRaw \|\| "status"/);
+  assert.match(source, /可用命令：\/feishu setup \| start \| stop \| restart \| refresh \| status \| debug \| autostart \| reset/);
+});
