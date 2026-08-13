@@ -233,6 +233,7 @@ const launched = spawn(bunBin, [
     ...process.env,
     ...(rpcOmpCli ? { OMP_CLI_PATH: rpcOmpCli } : {}),
     ...(process.env.PI_CODING_AGENT_DIR || process.env.OMP_AGENT_DIR ? { PI_CODING_AGENT_DIR: agentDir } : {}),
+    FEISHU_PLUGIN_VERSION: packageManifest.version,
   },
   stdio: "ignore",
   windowsHide: true,

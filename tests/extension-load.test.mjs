@@ -93,7 +93,16 @@ test("documents the actual config and model-file ownership", () => {
 test("registers OMP argument completions for /feishu subcommands", () => {
   const source = readFileSync(extensionPath, "utf8");
   assert.match(source, /getArgumentCompletions: \(prefix\)/);
-  assert.match(source, /setup.*start.*stop.*restart.*refresh.*status.*debug.*autostart.*reset/s);
+  assert.match(source, /setup.*start.*stop.*restart.*refresh.*status.*doctor.*version.*debug.*autostart.*reset/s);
   assert.match(source, /const cmd = cmdRaw \|\| "status"/);
-  assert.match(source, /可用命令：\/feishu setup \| start \| stop \| restart \| refresh \| status \| debug \| autostart \| reset/);
+  assert.match(source, /可用命令：\/feishu setup \| start \| stop \| restart \| refresh \| status \| doctor \| version \| debug \| autostart \| reset/);
+});
+
+test("provides doctor/version diagnostics and injects the release version into daemons", () => {
+  const source = readFileSync(extensionPath, "utf8");
+  const installerSource = readFileSync(join(repoRoot, "src", "cli.ts"), "utf8");
+  assert.match(source, /async function doctorReport/);
+  assert.match(source, /function versionReport/);
+  assert.match(source, /formatStartError/);
+  assert.match(installerSource, /FEISHU_PLUGIN_VERSION/);
 });

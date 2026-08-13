@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, watch, writeFileSync } from "node:fs";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
@@ -244,6 +244,60 @@ export default function feishuExtension(pi: ExtensionAPI) {
     ctx.ui.notify(withBuildTag(`飞书连接已启动。\nGateway pid=${result.pid}\nLog: ${DAEMON_LOG_PATH}`), "info");
   }
 
+  function formatStartError(error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    const lower = message.toLowerCase();
+    let cause = "未知启动错误";
+    if (lower.includes("missing config")) cause = "配置文件不存在或无效";
+    else if (lower.includes("permission") || lower.includes("forbidden") || lower.includes("im:message")) cause = "飞书权限不足";
+    else if (lower.includes("model") || lower.includes("provider") || lower.includes("auth")) cause = "模型或模型凭据不可用";
+    else if (lower.includes("omp cli") || lower.includes("could not locate")) cause = "找不到 OMP CLI";
+    else if (lower.includes("supervisor")) cause = "supervisor 启动失败";
+    else if (lower.includes("connect") || lower.includes("gateway")) cause = "飞书网关连接失败";
+    return `启动失败：${cause}\n${message}\n请运行 /feishu doctor，并查看日志：${DAEMON_LOG_PATH}`;
+  }
+
+  function pluginVersion() {
+    if (process.env.FEISHU_PLUGIN_VERSION) return process.env.FEISHU_PLUGIN_VERSION;
+    try {
+      const packagePath = join(dirname(fileURLToPath(import.meta.url)), "..", "package.json");
+      const manifest = JSON.parse(readFileSync(packagePath, "utf8"));
+      return typeof manifest.version === "string" ? manifest.version : "unknown";
+    } catch {
+      return "unknown";
+    }
+  }
+
+  function versionReport() {
+    const omp = spawnSync(ompCliPath, ["--version"], { encoding: "utf8", timeout: 5_000 });
+    const ompVersion = omp.status === 0 ? `${omp.stdout || omp.stderr}`.trim() : "unavailable";
+    return [
+      `Feishu plugin: ${pluginVersion()}`,
+      `OMP: ${ompVersion || "unknown"}`,
+      `Bun: ${process.versions.bun || process.version}`,
+      `Agent dir: ${getAgentDir()}`,
+      `Workspace: ${process.cwd()}`,
+      `Config: ${CONFIG_PATH}`,
+    ].join("\n");
+  }
+
+  async function doctorReport() {
+    const cfg = loadConfig();
+    const owner = gatewayLock?.owner || readGatewayOwner();
+    const supervisorPid = readPidFile(SUPERVISOR_PID_PATH);
+    const models = await conversations.getAvailableModels().catch(() => []);
+    const checks = [
+      `${cfg ? "OK" : "FAIL"} config: ${cfg ? CONFIG_PATH : "missing; run /feishu setup"}`,
+      `${existsSync(ompCliPath) ? "OK" : "FAIL"} omp cli: ${ompCliPath}`,
+      `${owner?.status === "connected" ? "OK" : "WARN"} gateway: ${owner ? formatOwner(owner) : "not running"}`,
+      `${supervisorPid && processExists(supervisorPid) ? "OK" : "WARN"} supervisor: ${supervisorPid || "not running"}`,
+      `${models.length ? "OK" : "FAIL"} models: ${models.length ? `${models.length} available` : "none available; check models.yml/auth"}`,
+      `${existsSync(process.cwd()) ? "OK" : "FAIL"} workspace: ${process.cwd()}`,
+      `logs: ${DAEMON_LOG_PATH}`,
+    ];
+    return [`Feishu doctor`, `version: ${pluginVersion()}`, ...checks].join("\n");
+  }
+
   function daemonSpec() {
     const extensionPath = fileURLToPath(import.meta.url);
     const args = [
@@ -338,9 +392,9 @@ export default function feishuExtension(pi: ExtensionAPI) {
   }
 
   pi.registerCommand("feishu", {
-    description: "Feishu/Lark: setup, start, stop, restart, status, debug, autostart, reset",
+    description: "Feishu/Lark: setup, start, stop, restart, refresh, status, doctor, version, debug, autostart, reset",
     getArgumentCompletions: (prefix) => {
-      const commands = ["setup", "start", "stop", "restart", "refresh", "status", "debug", "autostart", "reset"];
+      const commands = ["setup", "start", "stop", "restart", "refresh", "status", "doctor", "version", "debug", "autostart", "reset"];
       const query = prefix.trim().toLowerCase();
       return commands
         .filter((command) => command.startsWith(query))
@@ -361,7 +415,11 @@ export default function feishuExtension(pi: ExtensionAPI) {
           return;
         }
         if (cmd === "start") {
-          notifyDaemonStartResult(ctx, await startDaemon(false));
+          try {
+            notifyDaemonStartResult(ctx, await startDaemon(false));
+          } catch (error) {
+            ctx.ui.notify(formatStartError(error), "error");
+          }
           refreshStatusFromState();
           return;
         }
@@ -377,7 +435,14 @@ export default function feishuExtension(pi: ExtensionAPI) {
           return;
         }
         if (cmd === "restart") {
-          const result = await restartDaemon();
+          let result;
+          try {
+            result = await restartDaemon();
+          } catch (error) {
+            ctx.ui.notify(formatStartError(error), "error");
+            refreshStatusFromState();
+            return;
+          }
           if (result.status === "error") {
             const stopped = result.stopped;
             ctx.ui.notify(`飞书连接重启失败：${stopped.error instanceof Error ? stopped.error.message : String(stopped.error)}\nOwner: ${formatOwner(stopped.owner)}`, "error");
@@ -429,6 +494,14 @@ export default function feishuExtension(pi: ExtensionAPI) {
           );
           return;
         }
+        if (cmd === "doctor") {
+          ctx.ui.notify(await doctorReport(), "info");
+          return;
+        }
+        if (cmd === "version") {
+          ctx.ui.notify(versionReport(), "info");
+          return;
+        }
         if (cmd === "status") {
           refreshStatusFromState();
           const cfg = loadConfig();
@@ -468,7 +541,7 @@ export default function feishuExtension(pi: ExtensionAPI) {
           refreshStatusFromState();
           return;
         }
-        ctx.ui.notify("可用命令：/feishu setup | start | stop | restart | refresh | status | debug | autostart | reset", "info");
+        ctx.ui.notify("可用命令：/feishu setup | start | stop | restart | refresh | status | doctor | version | debug | autostart | reset", "info");
       } catch (error) {
         ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
       }
@@ -549,6 +622,15 @@ function readPidFile(path: string) {
     return Number.isSafeInteger(pid) && pid > 0 ? pid : undefined;
   } catch {
     return undefined;
+  }
+}
+
+function processExists(pid: number) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
   }
 }
 
