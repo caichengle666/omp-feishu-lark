@@ -23,7 +23,7 @@ bunx @caichengle/omp-feishu-lark
 ```
 
 The Bun installer supports Windows, Linux, and macOS. It installs runtime state under
-`~/.omp`, uses the package-compatible OMP CLI, migrates an existing legacy
+`~/.omp` (or `OMP_AGENT_DIR` when set), uses the package-compatible OMP CLI, migrates an existing legacy
 `~/.pi/agent/feishu/config.json`, and waits until the gateway reports
 `connected`, then starts a disposable OMP RPC worker and requires its `ready`
 frame. Installation fails with a direct diagnostic if Feishu can connect but
@@ -100,9 +100,9 @@ Credentials are checked against
 rejected pair re-prompts instead of leaving a daemon that cannot connect.
 `config.json` is written with mode 600.
 
-When `models.yml` is absent the installer offers to write a single-provider
-catalog (name, baseUrl, apiKey, default model id). Decline and the plugin still
-starts, just with no usable model.
+The installer does not overwrite `models.yml`; create or edit the OMP model
+catalog separately when you need a provider. The daemon reloads that file after
+an atomic save, so new model entries become available without reinstalling.
 
 Existing `config.json` / `models.yml` are never overwritten — the run reports
 `keeping credentials` and moves on. Use `--reconfigure` to redo them.
@@ -148,12 +148,13 @@ Machine-local state, deliberately excluded:
 
 | File | Why |
 |---|---|
-| `~/.omp/agent/feishu/config.json` | contains `appId` / `appSecret` |
+| `~/.omp/agent/feishu/config.json` | contains `appId` / `appSecret` (or `$OMP_AGENT_DIR/feishu/config.json`) |
 | `~/.omp/agent/feishu/state.json` | per-chat session and model bindings |
 | `~/.omp/agent/models.yml` | model catalog + API keys |
 
 On a machine that has never run the plugin, the installer's credential prompts
-cover everything `/feishu setup` would have written.
+create the same `config.json` that `/feishu setup` writes. Inside OMP, run
+`/feishu setup` at any time to create or replace that file interactively.
 
 These files are also listed in `.gitignore`: they must never be committed, and
 the installer writes them with mode `600`.
@@ -247,4 +248,3 @@ MIT — see [LICENSE](LICENSE). The plugin sources under `extension/` originate
 from [AX1202/pi-feishu-lark](https://github.com/AX1202/pi-feishu-lark) and
 remain under their original MIT terms; the patches, Bun installer, and
 `support/feishu-supervisor.mjs` are released under the same license.
-

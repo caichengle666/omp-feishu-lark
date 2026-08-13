@@ -71,3 +71,11 @@ test("passes the resolved model into the Feishu OMP session without awaiting its
   assert.match(source, /const model = await this\.resolveSelectedModel\(key, false\);/);
   assert.doesNotMatch(source, /const model = selected \?/);
 });
+
+test("documents the actual config and model-file ownership", () => {
+  const readme = readFileSync(join(repoRoot, "README.md"), "utf8");
+  const configSource = readFileSync(join(repoRoot, "extension", "config.ts"), "utf8");
+  assert.match(configSource, /OMP_AGENT_DIR/);
+  assert.match(readme, /`\/feishu setup`/);
+  assert.match(readme, /does not overwrite `models\.yml`/);
+});
