@@ -1,4 +1,4 @@
-# Feishu/Lark plugin — patched build
+# Feishu/Lark OMP plugin — patched build
 
 A patched redistribution of [**AX1202/pi-feishu-lark**](https://github.com/AX1202/pi-feishu-lark)
 (v0.2.4, MIT) that runs against SDK `@oh-my-pi/pi-coding-agent@17.2.10`, plus a
@@ -23,7 +23,7 @@ bunx @caichengle/omp-feishu-lark
 ```
 
 The Bun installer supports Windows, Linux, and macOS. It installs runtime state under
-`~/.omp` (or `OMP_AGENT_DIR` when set), uses the package-compatible OMP CLI, migrates an existing legacy
+`~/.omp` (or `PI_CODING_AGENT_DIR` when set), uses the package-compatible OMP CLI, migrates an existing legacy
 `~/.pi/agent/feishu/config.json`, and waits until the gateway reports
 `connected`, then starts a disposable OMP RPC worker and requires its `ready`
 frame. Installation fails with a direct diagnostic if Feishu can connect but
@@ -47,7 +47,11 @@ The daemon log rotates at 5 MiB and keeps one previous file as
 `daemon.log.1`; the structured debug log keeps its most recent 1000 entries.
 CI runs the type check, tests, and Bun build on Windows, Linux, and macOS.
 
-Every path derives from `$HOME`, so a non-root install works unchanged.
+Every path derives from `$HOME`, so a non-root install works unchanged. The
+extension itself uses OMP's `getAgentDir()` API, so OMP profiles resolve to the
+same directory as the host. The installer forwards OMP 17's historical
+`PI_CODING_AGENT_DIR` environment name only when launching detached workers;
+this is an OMP compatibility variable, not a Pi plugin dependency.
 
 ### Architecture (arm64 / x86_64)
 
@@ -148,7 +152,7 @@ Machine-local state, deliberately excluded:
 
 | File | Why |
 |---|---|
-| `~/.omp/agent/feishu/config.json` | contains `appId` / `appSecret` (or `$OMP_AGENT_DIR/feishu/config.json`) |
+| `~/.omp/agent/feishu/config.json` | contains `appId` / `appSecret` (or `$PI_CODING_AGENT_DIR/feishu/config.json`) |
 | `~/.omp/agent/feishu/state.json` | per-chat session and model bindings |
 | `~/.omp/agent/models.yml` | model catalog + API keys |
 

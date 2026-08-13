@@ -89,7 +89,13 @@ const pythonBin = isWindows
   ? findCommand("python", ["python.exe"] ) || findCommand("py", ["py.exe"])
   : findCommand("python3", ["/usr/bin/python3", "/usr/local/bin/python3"]);
 
-const agentDir = process.env.OMP_AGENT_DIR || join(homeDir, ".omp", "agent");
+// OMP 17 exposes the resolved agent directory through its compatibility
+// environment name PI_CODING_AGENT_DIR. This installer forwards it only so the
+// detached OMP daemon and RPC workers use the same OMP profile directory.
+const agentDir = process.env.PI_CODING_AGENT_DIR || process.env.OMP_AGENT_DIR || join(homeDir, ".omp", "agent");
+if (process.env.OMP_PROFILE && !process.env.PI_CODING_AGENT_DIR && !process.env.OMP_AGENT_DIR) {
+  fail("OMP_PROFILE is set but no PI_CODING_AGENT_DIR was provided. Set PI_CODING_AGENT_DIR to the profile's agent directory so Feishu config and OMP state stay aligned.");
+}
 pluginDir = pluginDir || join(dirname(agentDir), "extensions", "feishu");
 const extensionDir = join(pluginDir, "extension");
 const runtimeDir = join(agentDir, "feishu");
@@ -206,7 +212,11 @@ const launched = spawn(bunBin, [
 ], {
   cwd: workspace,
   detached: true,
-  env: rpcOmpCli ? { ...process.env, OMP_CLI_PATH: rpcOmpCli } : process.env,
+  env: {
+    ...process.env,
+    ...(rpcOmpCli ? { OMP_CLI_PATH: rpcOmpCli } : {}),
+    ...(process.env.PI_CODING_AGENT_DIR || process.env.OMP_AGENT_DIR ? { PI_CODING_AGENT_DIR: agentDir } : {}),
+  },
   stdio: "ignore",
   windowsHide: true,
 });

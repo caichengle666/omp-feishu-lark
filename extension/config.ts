@@ -2,8 +2,14 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, chmodSync, rmSync }
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { CardActionMode, Domain, FeishuConfig, GroupPolicy } from "./types.js";
+import { getAgentDir } from "@oh-my-pi/pi-coding-agent";
 
-export const AGENT_DIR = process.env.OMP_AGENT_DIR || join(homedir(), ".omp", "agent");
+// This is an OMP extension. OMP owns profile resolution; use its canonical
+// directory when the extension is loaded by OMP. Environment fallbacks keep
+// installer/self-test imports safe.
+export const AGENT_DIR = typeof getAgentDir === "function"
+  ? getAgentDir()
+  : process.env.PI_CODING_AGENT_DIR || process.env.OMP_AGENT_DIR || join(homedir(), ".omp", "agent");
 export const ROOT_DIR = process.env.OMP_FEISHU_ROOT || join(AGENT_DIR, "feishu");
 export const CONFIG_PATH = join(ROOT_DIR, "config.json");
 export const STATE_PATH = join(ROOT_DIR, "state.json");

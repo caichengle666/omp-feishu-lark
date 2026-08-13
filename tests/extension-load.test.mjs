@@ -63,7 +63,9 @@ test("resolves RPC workers from a stable OMP CLI path", () => {
   assert.match(installerSource, /OMP_CLI_PATH: rpcOmpCli/);
   assert.match(installerSource, /process\.env\.OMP_BIN_PATH/);
   assert.match(installerSource, /readGlobalPackageRoots\("npm"\)/);
-  assert.match(installerSource, /OMP_AGENT_DIR/);
+  assert.match(installerSource, /PI_CODING_AGENT_DIR/);
+  assert.match(installerSource, /agentDir/);
+  assert.match(installerSource, /OMP_PROFILE/);
 });
 
 test("passes the resolved model into the Feishu OMP session without awaiting its own cache", () => {
@@ -75,7 +77,7 @@ test("passes the resolved model into the Feishu OMP session without awaiting its
 test("documents the actual config and model-file ownership", () => {
   const readme = readFileSync(join(repoRoot, "README.md"), "utf8");
   const configSource = readFileSync(join(repoRoot, "extension", "config.ts"), "utf8");
-  assert.match(configSource, /OMP_AGENT_DIR/);
+  assert.match(configSource, /getAgentDir/);
   assert.match(readme, /`\/feishu setup`/);
   assert.match(readme, /does not overwrite `models\.yml`/);
 });
