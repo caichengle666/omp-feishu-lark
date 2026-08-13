@@ -83,9 +83,13 @@ wherever the installer happened to run.
 `PI_FEISHU_DAEMON=1` is set on the launch so the plugin does not autostart a
 second daemon on top of the one the installer just started.
 
-The installer snapshots an existing plugin dir to
-`<dir>.before-restore-<timestamp>` before copying, compile-checks the sources,
-and waits up to 90s for `connected`.
+During an upgrade the installer stops the existing supervisor, prepares the
+new plugin and its runtime dependencies in a staging directory, compile-checks
+it, then swaps the directory and removes the old copy. Failed preparation keeps
+the previous plugin intact; successful upgrades remove the staging/backup
+directories. Configuration, sessions, models, and logs remain under the OMP
+agent directory. The installer then starts the new supervisor and waits up to
+90s for `connected`.
 
 ### Interactive setup
 

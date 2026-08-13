@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { existsSync, mkdirSync, readFileSync, rmSync, watch, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, watch, writeFileSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -157,18 +157,24 @@ if (restart) {
 
 await checkFeishuApp(config);
 
-if (existsSync(extensionDir)) removeDirectory(extensionDir);
-mkdirSync(extensionDir, { recursive: true });
-mkdirSync(supportDir, { recursive: true });
+const stagingDir = join(dirname(pluginDir), `.feishu-install-${process.pid}-${Date.now()}`);
+removeDirectory(stagingDir);
+mkdirSync(stagingDir, { recursive: true });
+const stagingExtensionDir = join(stagingDir, "extension");
+const stagingSupportDir = join(stagingDir, "support");
+mkdirSync(stagingExtensionDir, { recursive: true });
+mkdirSync(stagingSupportDir, { recursive: true });
 const extensionFiles = ["attachments.ts", "bridge-runtime.ts", "bridge-store.ts", "card-action-webhook.ts", "cards.ts", "config.ts", "conversation-manager.ts", "debug.ts", "dedupe-store.ts", "delivery.ts", "gateway-lock.ts", "index.ts", "message-handler.ts", "messages.ts", "prompt-timeout.ts", "rich-text.ts", "rpc-worker-pool.ts", "setup.ts", "task-status-card.ts", "tencent-asr.ts", "transport.ts", "types.ts"];
 for (const file of extensionFiles) {
-  writeFileSync(join(extensionDir, file), readFileSync(join(packageRoot, "extension", file)));
+  writeFileSync(join(stagingExtensionDir, file), readFileSync(join(packageRoot, "extension", file)));
 }
-writeFileSync(supervisorPath, readFileSync(join(packageRoot, "support", "feishu-supervisor.mjs")));
+writeFileSync(join(stagingSupportDir, "feishu-supervisor.mjs"), readFileSync(join(packageRoot, "support", "feishu-supervisor.mjs")));
 ok("Plugin files installed");
 
-const pluginPackagePath = join(pluginDir, "package.json");
-writeFileSync(pluginPackagePath, `${JSON.stringify({
+const stagingPackagePath = join(stagingDir, "package.json");
+const stagingSupervisorPath = join(stagingSupportDir, "feishu-supervisor.mjs");
+const stagingExtensionPath = join(stagingExtensionDir, "index.ts");
+writeFileSync(stagingPackagePath, `${JSON.stringify({
   name: "omp-feishu-runtime",
   private: true,
   type: "module",
@@ -177,16 +183,27 @@ writeFileSync(pluginPackagePath, `${JSON.stringify({
     "qrcode-terminal": "^0.12.0",
   },
 }, null, 2)}\n`);
+const pluginPackagePath = stagingPackagePath;
 info("installing plugin runtime dependencies...");
-const installed = spawnSync(bunBin, ["install", "--production"], { cwd: pluginDir, stdio: "inherit" });
-if (installed.status !== 0) fail("Could not install plugin runtime dependencies.");
+const installed = spawnSync(bunBin, ["install", "--production", "--no-save"], { cwd: stagingDir, stdio: "inherit" });
+if (installed.status !== 0) {
+  removeDirectory(stagingDir);
+  fail("Could not install plugin runtime dependencies.");
+}
 ok("Plugin dependencies ready");
 
 const buildTarget = join(tmpdir(), `omp-feishu-build-${process.pid}.js`);
-const compiled = spawnSync(bunBin, ["build", "--target=bun", "--external", "@oh-my-pi/pi-coding-agent", "--external", "typebox", "--external", "@larksuiteoapi/node-sdk", "--external", "qrcode-terminal", `--outfile=${buildTarget}`, join(extensionDir, "index.ts")], { cwd: packageRoot, encoding: "utf8" });
+const compiled = spawnSync(bunBin, ["build", "--target=bun", "--external", "@oh-my-pi/pi-coding-agent", "--external", "typebox", "--external", "@larksuiteoapi/node-sdk", "--external", "qrcode-terminal", `--outfile=${buildTarget}`, stagingExtensionPath], { cwd: packageRoot, encoding: "utf8" });
 try { rmSync(buildTarget, { force: true }); } catch {}
-if (compiled.status !== 0) fail(`Plugin compile check failed:\n${[compiled.stdout, compiled.stderr].join("\n")}`);
+if (compiled.status !== 0) {
+  removeDirectory(stagingDir);
+  fail(`Plugin compile check failed:\n${[compiled.stdout, compiled.stderr].join("\n")}`);
+}
 ok("Plugin compile check passed");
+
+replacePluginDirectory(stagingDir, pluginDir);
+removeDirectory(stagingDir);
+ok("Old plugin files replaced and temporary files removed");
 
 if (!restart) {
   info("Files installed; daemon was not restarted (--no-restart).");
@@ -197,11 +214,11 @@ if (!existsSync(workspace)) fail(`Workspace does not exist: ${workspace}`);
 mkdirSync(runtimeDir, { recursive: true });
 
 const logPath = join(runtimeDir, "daemon.log");
-const daemonArgs = ["--mode", "rpc", "--no-extensions", "--no-skills", "--allow-home", "--cwd", workspace, "-e", join(extensionDir, "index.ts")];
+const daemonArgs = ["--mode", "rpc", "--no-extensions", "--no-skills", "--allow-home", "--cwd", workspace, "-e", join(pluginDir, "extension", "index.ts")];
 const daemonExecutable = compatibleOmpCli ? bunBin : ompBin;
 const daemonLaunchArgs = compatibleOmpCli ? [compatibleOmpCli, ...daemonArgs] : daemonArgs;
 const launched = spawn(bunBin, [
-  supervisorPath,
+  join(pluginDir, "support", "feishu-supervisor.mjs"),
   "--cwd", workspace,
   "--log", logPath,
   "--pid", supervisorPidPath,
@@ -271,6 +288,21 @@ function removeDirectory(path: string) {
     rmSync(path, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
   } catch (error) {
     fail(`Could not remove existing plugin directory: ${path}\n${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+function replacePluginDirectory(staging: string, target: string) {
+  const backup = `${target}.old-${process.pid}-${Date.now()}`;
+  try {
+    if (existsSync(target)) renameSync(target, backup);
+    renameSync(staging, target);
+    removeDirectory(backup);
+  } catch (error) {
+    try {
+      if (!existsSync(target) && existsSync(backup)) renameSync(backup, target);
+    } catch {}
+    removeDirectory(staging);
+    throw new Error(`Could not replace plugin directory: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 

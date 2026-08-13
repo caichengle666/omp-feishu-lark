@@ -54,6 +54,14 @@ test("starts the detached Feishu gateway through the shared cross-platform super
   assert.doesNotMatch(source, /powershell|tail -f|spawn\("bash"/i);
 });
 
+test("stages and atomically replaces the plugin directory during upgrades", () => {
+  const installerSource = readFileSync(join(repoRoot, "src", "cli.ts"), "utf8");
+  assert.match(installerSource, /\.feishu-install-/);
+  assert.match(installerSource, /replacePluginDirectory\(stagingDir, pluginDir\)/);
+  assert.match(installerSource, /removeDirectory\(backup\)/);
+  assert.match(installerSource, /--no-save/);
+});
+
 test("resolves RPC workers from a stable OMP CLI path", () => {
   const extensionSource = readFileSync(extensionPath, "utf8");
   const installerSource = readFileSync(join(repoRoot, "src", "cli.ts"), "utf8");
