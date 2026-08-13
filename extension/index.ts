@@ -39,7 +39,10 @@ export default function feishuExtension(pi: ExtensionAPI) {
     promptNotifySec: bootConfig?.promptNotifySec,
     promptTimeoutSec: bootConfig?.promptTimeoutSec,
   }, rpcWorkers);
-  const messageHandler = new FeishuMessageHandler(conversations, () => transport, bridgeStore);
+  const messageHandler = new FeishuMessageHandler(conversations, () => transport, bridgeStore, {
+    doctor: () => doctorReport(),
+    version: () => versionReport(),
+  });
 
   const STATUS_KEY = "feishu-connection";
   const STATUS_REFRESH_MS = 2_000;

@@ -106,3 +106,11 @@ test("provides doctor/version diagnostics and injects the release version into d
   assert.match(source, /formatStartError/);
   assert.match(installerSource, /FEISHU_PLUGIN_VERSION/);
 });
+
+test("exposes doctor/version commands to Feishu messages as well as OMP", () => {
+  const messagesSource = readFileSync(join(repoRoot, "extension", "messages.ts"), "utf8");
+  const handlerSource = readFileSync(join(repoRoot, "extension", "message-handler.ts"), "utf8");
+  assert.match(messagesSource, /\/feishu doctor/);
+  assert.match(messagesSource, /\/feishu version/);
+  assert.match(handlerSource, /command\.name === "doctor" \|\| command\.name === "version"/);
+});

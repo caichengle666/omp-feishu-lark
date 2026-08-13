@@ -20,6 +20,7 @@ export class FeishuMessageHandler {
     private readonly conversations: ConversationManager,
     private readonly getTransport: () => FeishuTransport | undefined,
     private readonly bridgeStore?: FeishuBridgeStore,
+    private readonly diagnostics?: { doctor: () => string | Promise<string>; version: () => string },
   ) {}
 
   reset() {
@@ -157,6 +158,14 @@ export class FeishuMessageHandler {
       await this.conversations.stopConversation(key, async (reply) => {
         await transport.replyText(msg.messageId, reply);
       });
+      return true;
+    }
+
+    if (command.name === "doctor" || command.name === "version") {
+      const text = command.name === "doctor"
+        ? await this.diagnostics?.doctor()
+        : this.diagnostics?.version();
+      await transport.replyText(msg.messageId, text || "诊断功能尚未准备好，请在 OMP 中运行 /feishu doctor 或 /feishu version。\nDiagnostics are not ready; run the OMP command directly.");
       return true;
     }
 
