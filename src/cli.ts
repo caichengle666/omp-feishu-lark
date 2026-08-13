@@ -59,10 +59,12 @@ for (let index = 0; index < args.length; index += 1) {
 }
 
 const bunBin = findCommand("bun", [
+  process.env.BUN_BIN_PATH || "",
   join(homeDir, ".bun", "bin", isWindows ? "bun.exe" : "bun"),
   isWindows ? "C:\\Program Files\\Bun\\bun.exe" : "/usr/local/bin/bun",
 ]);
 const ompBin = findCommand("omp", [
+  process.env.OMP_BIN_PATH || "",
   join(homeDir, ".bun", "bin", isWindows ? "omp.exe" : "omp"),
   isWindows ? "C:\\Program Files\\Bun\\omp.exe" : "/usr/local/bin/omp",
 ]);
@@ -74,20 +76,25 @@ const bundledOmpPackage = join(packageRoot, "node_modules", "@oh-my-pi", "pi-cod
 const compatibleOmpCli = existsSync(bundledOmpPackage)
   ? join(dirname(bundledOmpPackage), "dist", "cli.js")
   : "";
-const globalOmpCli = join(dirname(bunBin), "..", "install", "global", "node_modules", "@oh-my-pi", "pi-coding-agent", "dist", "cli.js");
+const globalOmpCliCandidates = [
+  join(dirname(ompBin), "..", "install", "global", "node_modules", "@oh-my-pi", "pi-coding-agent", "dist", "cli.js"),
+  join(dirname(bunBin), "..", "install", "global", "node_modules", "@oh-my-pi", "pi-coding-agent", "dist", "cli.js"),
+  ...readGlobalPackageRoots("npm"),
+].map((root) => root.endsWith("cli.js") ? root : join(root, "@oh-my-pi", "pi-coding-agent", "dist", "cli.js"));
 const configuredOmpCli = process.env.OMP_CLI_PATH || "";
-const rpcOmpCli = [configuredOmpCli, globalOmpCli, compatibleOmpCli].find((candidate) => candidate && existsSync(candidate)) || "";
+const rpcOmpCli = [configuredOmpCli, compatibleOmpCli, ...globalOmpCliCandidates].find((candidate) => candidate && existsSync(candidate)) || "";
 if (!rpcOmpCli) fail("Could not locate the OMP CLI used by RPC workers. Reinstall OMP or set OMP_CLI_PATH.");
 
 const pythonBin = isWindows
   ? findCommand("python", ["python.exe"] ) || findCommand("py", ["py.exe"])
   : findCommand("python3", ["/usr/bin/python3", "/usr/local/bin/python3"]);
 
-pluginDir = pluginDir || join(homeDir, ".omp", "extensions", "feishu");
+const agentDir = process.env.OMP_AGENT_DIR || join(homeDir, ".omp", "agent");
+pluginDir = pluginDir || join(dirname(agentDir), "extensions", "feishu");
 const extensionDir = join(pluginDir, "extension");
-const runtimeDir = join(homeDir, ".omp", "agent", "feishu");
+const runtimeDir = join(agentDir, "feishu");
 const configPath = join(runtimeDir, "config.json");
-const lockPath = join(homeDir, ".omp", "agent", "locks.json");
+const lockPath = join(agentDir, "locks.json");
 const supportDir = join(pluginDir, "support");
 const supervisorPath = join(supportDir, "feishu-supervisor.mjs");
 const supervisorPidPath = join(runtimeDir, "supervisor.pid");
@@ -228,6 +235,12 @@ function parsePositiveInt(value: string | undefined, fallback: number) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+function readGlobalPackageRoots(command: string) {
+  const result = spawnSync(command, ["root", "-g"], { encoding: "utf8" });
+  if (result.status !== 0) return [];
+  return result.stdout.split(/\r?\n/).map((value) => value.trim()).filter(Boolean);
+}
+
 function validateInstallerConfig(value: Record<string, unknown> | undefined) {
   if (!value || typeof value.appId !== "string" || !value.appId.trim() || typeof value.appSecret !== "string" || !value.appSecret.trim()) {
     fail(`Invalid configuration file: ${configPath}`);
@@ -349,4 +362,3 @@ async function waitForConnected(path: string, timeoutMs: number) {
     check();
   });
 }
-

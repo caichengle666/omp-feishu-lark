@@ -61,6 +61,9 @@ test("resolves RPC workers from a stable OMP CLI path", () => {
   assert.match(extensionSource, /process\.env\.OMP_CLI_PATH/);
   assert.match(extensionSource, /install", "global", "node_modules"/);
   assert.match(installerSource, /OMP_CLI_PATH: rpcOmpCli/);
+  assert.match(installerSource, /process\.env\.OMP_BIN_PATH/);
+  assert.match(installerSource, /readGlobalPackageRoots\("npm"\)/);
+  assert.match(installerSource, /OMP_AGENT_DIR/);
 });
 
 test("passes the resolved model into the Feishu OMP session without awaiting its own cache", () => {
@@ -68,4 +71,3 @@ test("passes the resolved model into the Feishu OMP session without awaiting its
   assert.match(source, /const model = await this\.resolveSelectedModel\(key, false\);/);
   assert.doesNotMatch(source, /const model = selected \?/);
 });
-

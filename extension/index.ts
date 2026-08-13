@@ -520,8 +520,11 @@ export default function feishuExtension(pi: ExtensionAPI) {
 
 function resolveOmpCliPath() {
   if (process.env.OMP_CLI_PATH) return process.env.OMP_CLI_PATH;
-  const globalCli = join(dirname(process.execPath), "..", "install", "global", "node_modules", "@oh-my-pi", "pi-coding-agent", "dist", "cli.js");
-  if (existsSync(globalCli)) return globalCli;
+  const candidates = [
+    join(dirname(process.execPath), "..", "install", "global", "node_modules", "@oh-my-pi", "pi-coding-agent", "dist", "cli.js"),
+    process.env.OMP_BIN_PATH ? join(dirname(process.env.OMP_BIN_PATH), "..", "install", "global", "node_modules", "@oh-my-pi", "pi-coding-agent", "dist", "cli.js") : "",
+  ];
+  for (const candidate of candidates) if (candidate && existsSync(candidate)) return candidate;
   throw new Error("Could not locate the OMP CLI. Reinstall OMP or set OMP_CLI_PATH.");
 }
 
@@ -593,4 +596,3 @@ function tryAcquireSpawnLock(lockPath: string) {
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
-
