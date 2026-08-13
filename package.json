@@ -1,6 +1,6 @@
 {
   "name": "@caichengle/omp-feishu-lark",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "description": "Feishu/Lark bridge for Pi coding agent — chat with Pi from Feishu or Lark",
   "type": "module",
   "license": "MIT",
@@ -61,4 +61,3 @@
     }
   }
 }
-
