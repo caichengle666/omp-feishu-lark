@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawn } from "node:child_process";
 import test from "node:test";
-import { parseSupervisorArgs, restartDelay } from "../support/feishu-supervisor.mjs";
+import { appendRotatingLog, parseSupervisorArgs, restartDelay } from "../support/feishu-supervisor.mjs";
 
 test("supervisor parses one cross-platform executable and argument array", () => {
   assert.deepEqual(parseSupervisorArgs([
@@ -26,6 +26,17 @@ test("supervisor parses one cross-platform executable and argument array", () =>
 
 test("supervisor restart delay is exponential and capped", () => {
   assert.deepEqual([1, 2, 3, 4, 5, 6, 20].map(restartDelay), [1000, 2000, 4000, 8000, 16000, 30000, 30000]);
+});
+
+test("supervisor rotates daemon logs at the configured size", () => {
+  const root = join(tmpdir(), `omp-feishu-log-${process.pid}-${Date.now()}`);
+  const logPath = join(root, "daemon.log");
+  mkdirSync(root, { recursive: true });
+  appendRotatingLog(logPath, "12345678", 10);
+  appendRotatingLog(logPath, "abcd", 10);
+  assert.equal(readFileSync(`${logPath}.1`, "utf8"), "12345678");
+  assert.equal(readFileSync(logPath, "utf8"), "abcd");
+  rmSync(root, { recursive: true, force: true });
 });
 
 test("supervisor keeps daemon stdin open and removes pid file on SIGTERM", async () => {
@@ -72,3 +83,4 @@ async function waitFor(predicate, timeoutMs) {
   }
   assert.fail(`condition not met within ${timeoutMs}ms`);
 }
+

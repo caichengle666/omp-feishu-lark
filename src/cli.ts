@@ -4,9 +4,12 @@ import { spawn, spawnSync } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
+import { cleanupLegacyInstallations } from "./legacy-cleanup.js";
+import { verifyRpcWorkerReady } from "./rpc-self-test.js";
 
 const isWindows = process.platform === "win32";
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const packageManifest = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8")) as { version: string };
 const homeDir = process.env.HOME || process.env.USERPROFILE;
 const timeoutSeconds = parsePositiveInt(process.env.OMP_FEISHU_TIMEOUT, 90);
 
@@ -67,13 +70,14 @@ const ompBin = findCommand("omp", [
 if (!bunBin) fail("Bun was not found. Install Bun first, then rerun this command.");
 if (!ompBin) fail("OMP was not found. Install OMP first, then rerun this command.");
 
-let compatibleOmpCli = "";
-try {
-  const ompPackageJson = Bun.resolveSync("@oh-my-pi/pi-coding-agent/package.json", packageRoot);
-  compatibleOmpCli = join(dirname(ompPackageJson), "dist", "cli.js");
-} catch {
-  // A globally installed OMP remains a supported fallback.
-}
+const bundledOmpPackage = join(packageRoot, "node_modules", "@oh-my-pi", "pi-coding-agent", "package.json");
+const compatibleOmpCli = existsSync(bundledOmpPackage)
+  ? join(dirname(bundledOmpPackage), "dist", "cli.js")
+  : "";
+const globalOmpCli = join(dirname(bunBin), "..", "install", "global", "node_modules", "@oh-my-pi", "pi-coding-agent", "dist", "cli.js");
+const configuredOmpCli = process.env.OMP_CLI_PATH || "";
+const rpcOmpCli = [configuredOmpCli, globalOmpCli, compatibleOmpCli].find((candidate) => candidate && existsSync(candidate)) || "";
+if (!rpcOmpCli) fail("Could not locate the OMP CLI used by RPC workers. Reinstall OMP or set OMP_CLI_PATH.");
 
 const pythonBin = isWindows
   ? findCommand("python", ["python.exe"] ) || findCommand("py", ["py.exe"])
@@ -126,17 +130,21 @@ if (!config) {
   ok("Feishu credentials found");
 }
 
-await checkFeishuApp(config);
-
 if (restart) {
   mkdirSync(runtimeDir, { recursive: true });
+  for (const message of cleanupLegacyInstallations({
+    homeDir,
+    pluginDir,
+    bunBin,
+    version: packageManifest.version,
+  })) ok(message);
   await stopExistingProcess(supervisorPidPath, supervisorStopPath);
   await stopExistingDaemon(lockPath);
 }
 
+await checkFeishuApp(config);
+
 if (existsSync(extensionDir)) removeDirectory(extensionDir);
-try { rmSync(join(runtimeDir, "start-daemon.cmd"), { force: true }); } catch {}
-try { rmSync(join(homeDir, ".omp", "feishu-watcher.mjs"), { force: true }); } catch {}
 mkdirSync(extensionDir, { recursive: true });
 mkdirSync(supportDir, { recursive: true });
 const extensionFiles = ["attachments.ts", "bridge-runtime.ts", "bridge-store.ts", "card-action-webhook.ts", "cards.ts", "config.ts", "conversation-manager.ts", "debug.ts", "dedupe-store.ts", "delivery.ts", "gateway-lock.ts", "index.ts", "message-handler.ts", "messages.ts", "prompt-timeout.ts", "rich-text.ts", "rpc-worker-pool.ts", "setup.ts", "task-status-card.ts", "tencent-asr.ts", "transport.ts", "types.ts"];
@@ -191,7 +199,7 @@ const launched = spawn(bunBin, [
 ], {
   cwd: workspace,
   detached: true,
-  env: process.env,
+  env: rpcOmpCli ? { ...process.env, OMP_CLI_PATH: rpcOmpCli } : process.env,
   stdio: "ignore",
   windowsHide: true,
 });
@@ -200,6 +208,14 @@ launched.unref();
 info(`Waiting for the Feishu gateway (up to ${timeoutSeconds} seconds)...`);
 if (await waitForConnected(lockPath, timeoutSeconds * 1000)) {
   ok("Feishu gateway connected");
+  info("Checking that an OMP RPC worker can start...");
+  try {
+    await verifyRpcWorkerReady({ bunBin, ompCliPath: rpcOmpCli, workspace, timeoutMs: timeoutSeconds * 1000 });
+    ok("OMP RPC worker ready");
+  } catch (error) {
+    await stopExistingProcess(supervisorPidPath, supervisorStopPath);
+    fail(`Gateway connected, but conversations cannot start: ${error instanceof Error ? error.message : String(error)}`);
+  }
   console.log("\nReady. Open your Feishu bot and send a message.");
   process.exit(0);
 }
@@ -288,10 +304,14 @@ async function checkFeishuApp(value: Record<string, unknown> | undefined) {
     if (!bot.ok) throw new Error(`bot/v3/info HTTP ${bot.status}`);
     const scopeJson = await scopes.json() as { data?: { scopes?: Array<{ scope_name?: string }> } };
     const names = new Set((scopeJson.data?.scopes || []).map((item) => item.scope_name));
-    for (const required of ["im:message", "im:message:send_as_bot"]) {
-      if (!names.has(required)) info(`warning: missing Feishu permission ${required}`);
+    const missing = ["im:message", "im:message:send_as_bot"].filter((required) => !names.has(required));
+    if (missing.length) {
+      const consoleUrl = value.domain === "lark" ? "https://open.larksuite.com/app" : "https://open.feishu.cn/app";
+      info(`warning: missing Feishu permissions: ${missing.join(", ")}`);
+      info(`grant them in the app console, then publish a new app version: ${consoleUrl}`);
+    } else {
+      ok("Feishu bot and permission check passed");
     }
-    ok("Feishu bot and permission check passed");
   } catch (error) {
     info(`warning: Feishu backend check skipped (${error instanceof Error ? error.message : String(error)})`);
   }
@@ -329,3 +349,4 @@ async function waitForConnected(path: string, timeoutMs: number) {
     check();
   });
 }
+

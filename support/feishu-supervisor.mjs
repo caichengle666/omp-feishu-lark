@@ -1,9 +1,20 @@
-import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { dirname } from "node:path";
 
 export function restartDelay(failures) {
   return Math.min(30_000, 1000 * (2 ** Math.max(0, failures - 1)));
+}
+
+export function appendRotatingLog(logPath, content, maxBytes = 5 * 1024 * 1024) {
+  try {
+    if (existsSync(logPath) && statSync(logPath).size + Buffer.byteLength(content) > maxBytes) {
+      const previousPath = `${logPath}.1`;
+      try { rmSync(previousPath, { force: true }); } catch {}
+      renameSync(logPath, previousPath);
+    }
+    appendFileSync(logPath, content, "utf8");
+  } catch {}
 }
 
 export function parseSupervisorArgs(argv) {
@@ -42,10 +53,9 @@ export async function runSupervisor(argv = process.argv.slice(2)) {
   let stableTimer;
   let restartTimer;
   let wakeRestart;
-  const logFd = openSync(logPath, "a");
   const log = (message) => {
     const line = `[${new Date().toISOString()}] ${message}\n`;
-    try { appendFileSync(logPath, line, "utf8"); } catch {}
+    appendRotatingLog(logPath, line);
   };
 
   const stop = async (signal) => {
@@ -82,9 +92,10 @@ export async function runSupervisor(argv = process.argv.slice(2)) {
         // RPC stdout contains full protocol frames, including conversation
         // content. The supervisor only needs stderr diagnostics and the
         // gateway lock for readiness, so do not persist stdout.
-        stdio: ["pipe", "ignore", logFd],
+        stdio: ["pipe", "ignore", "pipe"],
         windowsHide: true,
       });
+      child.stderr.on("data", (chunk) => appendRotatingLog(logPath, chunk));
       // RPC mode exits on stdin EOF. Keeping this writable pipe open is the
       // portable replacement for platform-specific shell pipelines.
       child.stdin.on("error", () => undefined);
@@ -112,7 +123,6 @@ export async function runSupervisor(argv = process.argv.slice(2)) {
     }
   } finally {
     clearInterval(stopPoll);
-    try { closeSync(logFd); } catch {}
     if (readPid(pidPath) === process.pid) try { rmSync(pidPath, { force: true }); } catch {}
     try { rmSync(stopPath, { force: true }); } catch {}
     log("supervisor stopped");
@@ -151,3 +161,4 @@ if (import.meta.main) {
     process.exitCode = 1;
   });
 }
+

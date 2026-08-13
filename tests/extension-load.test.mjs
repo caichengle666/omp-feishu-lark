@@ -54,8 +54,18 @@ test("starts the detached Feishu gateway through the shared cross-platform super
   assert.doesNotMatch(source, /powershell|tail -f|spawn\("bash"/i);
 });
 
+test("resolves RPC workers from a stable OMP CLI path", () => {
+  const extensionSource = readFileSync(extensionPath, "utf8");
+  const installerSource = readFileSync(join(repoRoot, "src", "cli.ts"), "utf8");
+  assert.doesNotMatch(extensionSource, /Bun\.resolveSync/);
+  assert.match(extensionSource, /process\.env\.OMP_CLI_PATH/);
+  assert.match(extensionSource, /install", "global", "node_modules"/);
+  assert.match(installerSource, /OMP_CLI_PATH: rpcOmpCli/);
+});
+
 test("passes the resolved model into the Feishu OMP session without awaiting its own cache", () => {
   const source = readFileSync(conversationManagerPath, "utf8");
   assert.match(source, /const model = await this\.resolveSelectedModel\(key, false\);/);
   assert.doesNotMatch(source, /const model = selected \?/);
 });
+

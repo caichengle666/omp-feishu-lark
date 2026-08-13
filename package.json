@@ -1,6 +1,6 @@
 {
   "name": "@caichengle/omp-feishu-lark",
-  "version": "0.4.0",
+  "version": "0.4.3",
   "description": "Feishu/Lark bridge for Pi coding agent — chat with Pi from Feishu or Lark",
   "type": "module",
   "license": "MIT",
@@ -23,7 +23,7 @@
     ]
   },
   "files": [
-    "src/cli.ts",
+    "src/**/*.ts",
     "extension/**/*.ts",
     "tests/**/*.mjs",
     "support/feishu-supervisor.mjs",
@@ -45,10 +45,12 @@
     "prepublishOnly": "bun run check && bun test tests"
   },
   "devDependencies": {
+    "@oh-my-pi/pi-coding-agent": "^17.2.12",
     "@types/bun": "^1.3.14",
     "@types/node": "^26.2.0",
     "@types/qrcode-terminal": "^0.12.2",
-    "typescript": "5.9.2"
+    "typescript": "5.9.2",
+    "typebox": "^1.3.12"
   },
   "peerDependenciesMeta": {
     "@oh-my-pi/pi-coding-agent": {
@@ -59,3 +61,4 @@
     }
   }
 }
+

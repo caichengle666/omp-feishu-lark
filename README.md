@@ -25,7 +25,9 @@ bunx @caichengle/omp-feishu-lark
 The Bun installer supports Windows, Linux, and macOS. It installs runtime state under
 `~/.omp`, uses the package-compatible OMP CLI, migrates an existing legacy
 `~/.pi/agent/feishu/config.json`, and waits until the gateway reports
-`connected`.
+`connected`, then starts a disposable OMP RPC worker and requires its `ready`
+frame. Installation fails with a direct diagnostic if Feishu can connect but
+OMP conversations cannot start.
 
 Optional arguments:
 
@@ -40,6 +42,10 @@ It resolves `bun`/`omp` off PATH, installs runtime dependencies inside the
 plugin directory, asks for credentials, starts the daemon, and
 exits once the gateway reports `connected`. At that point the bot answers in
 Feishu.
+
+The daemon log rotates at 5 MiB and keeps one previous file as
+`daemon.log.1`; the structured debug log keeps its most recent 1000 entries.
+CI runs the type check, tests, and Bun build on Windows, Linux, and macOS.
 
 Every path derives from `$HOME`, so a non-root install works unchanged.
 
@@ -100,6 +106,16 @@ starts, just with no usable model.
 
 Existing `config.json` / `models.yml` are never overwritten — the run reports
 `keeping credentials` and moves on. Use `--reconfigure` to redo them.
+
+### Upgrading older installs
+
+The installer migrates older Windows, Linux, and macOS layouts before starting
+the shared supervisor. It stops the legacy watcher, removes its launcher files,
+disables a verified legacy `omp-feishu.service` on Linux, removes only plugin
+directories whose manifest or source identifies this package, and upgrades an
+older OMP npm plugin registration. Runtime data under `~/.omp/agent/feishu`
+and `models.yml` are preserved. `--no-restart` skips process migration so an
+existing daemon is left running exactly as requested.
 
 ### Optional voice transcription
 
@@ -231,3 +247,4 @@ MIT — see [LICENSE](LICENSE). The plugin sources under `extension/` originate
 from [AX1202/pi-feishu-lark](https://github.com/AX1202/pi-feishu-lark) and
 remain under their original MIT terms; the patches, Bun installer, and
 `support/feishu-supervisor.mjs` are released under the same license.
+
