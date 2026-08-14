@@ -5,6 +5,7 @@ import { claimFeishuMessage, markFeishuMessage } from "./dedupe-store.js";
 import { debugLog } from "./debug.js";
 import { conversationKey, conversationLabel, normalizeForDedupe, parseBotCommand, parseMessageInput, pruneRecentMap } from "./messages.js";
 import { TaskStatusCard } from "./task-status-card.js";
+import { feishuHelpText } from "./help.js";
 import { transcribeTencentAudio } from "./tencent-asr.js";
 import type { FeishuBridgeStore } from "./bridge-store.js";
 import type { FeishuTransport } from "./transport.js";
@@ -115,7 +116,7 @@ export class FeishuMessageHandler {
       const message = error instanceof Error ? error.message : String(error);
       debugLog("feishu.handler.error", { messageId: msg.messageId, error: message });
       await markFeishuMessage(msg.messageId, "failed", message);
-      await this.getTransport()?.replyText(msg.messageId, `Pi error: ${message}`);
+      await this.getTransport()?.replyText(msg.messageId, `OMP error: ${message}`);
       debugLog("feishu.message.failed", { messageId: msg.messageId, latencyMs: Date.now() - startedAt });
     }
   }
@@ -139,7 +140,7 @@ export class FeishuMessageHandler {
       const models = await this.conversations.getAvailableModels();
       debugLog("feishu.command.model.models_loaded", { messageId: msg.messageId, key, count: models.length });
       if (!models.length) {
-        await transport.replyText(msg.messageId, "当前没有可用模型。请先在 Pi 里完成模型登录或 API Key 配置。");
+        await transport.replyText(msg.messageId, "当前没有可用模型。请先在 OMP 里完成模型登录或 API Key 配置。");
         return true;
       }
       const currentModel = await this.conversations.getSelectedModel(key);
@@ -158,6 +159,11 @@ export class FeishuMessageHandler {
       await this.conversations.stopConversation(key, async (reply) => {
         await transport.replyText(msg.messageId, reply);
       });
+      return true;
+    }
+
+    if (command.name === "help") {
+      await transport.replyText(msg.messageId, feishuHelpText());
       return true;
     }
 

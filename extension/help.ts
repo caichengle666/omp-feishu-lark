@@ -1,0 +1,27 @@
+export function feishuHelpText() {
+  return [
+    "飞书插件命令：",
+    "/feishu help - 查看全部命令及用途",
+    "/feishu setup - 配置飞书应用",
+    "/feishu start - 启动飞书连接",
+    "/feishu stop - 停止飞书连接",
+    "/feishu restart - 重启连接并加载最新代码和配置",
+    "/feishu refresh - 刷新 OMP 模型列表",
+    "/feishu status - 查看连接状态和运行位置",
+    "/feishu doctor - 检查配置、OMP、模型和 daemon",
+    "/feishu version - 查看插件、OMP 和 Bun 版本",
+    "/feishu debug - 查看最近的调试日志",
+    "/feishu autostart - 开关自动启动",
+    "/feishu reset - 重置插件配置和会话映射",
+    "",
+    "飞书聊天命令：",
+    "/new - 新建当前飞书会话",
+    "/resume - 恢复当前聊天的历史会话",
+    "/model - 选择当前聊天使用的模型",
+    "/stop - 停止当前聊天正在执行的任务",
+    "/workspace PATH - 切换当前聊天的工作目录",
+    "/doctor - 在飞书内运行诊断",
+    "/version - 在飞书内查看版本",
+    "/help - 在飞书内查看本帮助",
+  ].join("\n");
+}

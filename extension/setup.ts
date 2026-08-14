@@ -1,6 +1,6 @@
 import type { ExtensionCommandContext } from "@oh-my-pi/pi-coding-agent";
 import qrcode from "qrcode-terminal";
-import { CONFIG_PATH, DEFAULT_CONFIG, ensureRoot, mask, writeJson } from "./config.js";
+import { CONFIG_PATH, DEFAULT_CONFIG, ensureRoot, loadConfig, mask, writeJson } from "./config.js";
 import type { Domain, FeishuConfig, GroupPolicy } from "./types.js";
 
 export async function uiSelect<T extends string>(ctx: ExtensionCommandContext, title: string, options: Array<{ value: T; label: string }>, initialValue?: T): Promise<T> {
@@ -74,6 +74,7 @@ export async function runSetup(ctx: ExtensionCommandContext) {
   );
 
   const config: FeishuConfig = {
+    ...loadConfig(),
     appId,
     appSecret,
     domain,

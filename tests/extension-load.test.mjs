@@ -101,9 +101,9 @@ test("documents the actual config and model-file ownership", () => {
 test("registers OMP argument completions for /feishu subcommands", () => {
   const source = readFileSync(extensionPath, "utf8");
   assert.match(source, /getArgumentCompletions: \(prefix\)/);
-  assert.match(source, /setup.*start.*stop.*restart.*refresh.*status.*doctor.*version.*debug.*autostart.*reset/s);
+  assert.match(source, /help.*setup.*start.*stop.*restart.*refresh.*status.*doctor.*version.*debug.*autostart.*reset/s);
   assert.match(source, /const cmd = cmdRaw \|\| "status"/);
-  assert.match(source, /可用命令：\/feishu setup \| start \| stop \| restart \| refresh \| status \| doctor \| version \| debug \| autostart \| reset/);
+  assert.match(source, /ctx\.ui\.notify\(feishuHelpText\(\), "info"\)/);
 });
 
 test("provides doctor/version diagnostics and injects the release version into daemons", () => {
@@ -121,6 +121,26 @@ test("exposes doctor/version commands to Feishu messages as well as OMP", () => 
   assert.match(messagesSource, /\/feishu doctor/);
   assert.match(messagesSource, /\/feishu version/);
   assert.match(handlerSource, /command\.name === "doctor" \|\| command\.name === "version"/);
+});
+
+test("exposes the shared Chinese help command in OMP and Feishu", () => {
+  const messagesSource = readFileSync(join(repoRoot, "extension", "messages.ts"), "utf8");
+  const handlerSource = readFileSync(join(repoRoot, "extension", "message-handler.ts"), "utf8");
+  const helpSource = readFileSync(join(repoRoot, "extension", "help.ts"), "utf8");
+  assert.match(messagesSource, /\/feishu help/);
+  assert.match(handlerSource, /command\.name === "help"/);
+  assert.match(helpSource, /\/feishu setup - 配置飞书应用/);
+  assert.match(helpSource, /\/workspace PATH - 切换当前聊天的工作目录/);
+});
+
+test("installs and manages the proactive notification webhook", () => {
+  const source = readFileSync(extensionPath, "utf8");
+  const installerSource = readFileSync(join(repoRoot, "src", "cli.ts"), "utf8");
+  assert.match(source, /new FeishuNotificationWebhook\(cfg, bridgeStore, delivery\)/);
+  assert.match(source, /await notificationWebhook\.start\(\)/);
+  assert.match(source, /await notificationWebhook\?\.stop\(\)/);
+  assert.match(installerSource, /"notification-webhook\.ts"/);
+  assert.match(installerSource, /"help\.ts"/);
 });
 
 test("notifies an interactive OMP session when gateway ownership is lost", () => {

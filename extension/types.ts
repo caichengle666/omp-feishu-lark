@@ -13,6 +13,12 @@ export type FeishuConfig = {
   cardActionWebhookHost?: string;
   cardActionWebhookPort?: number;
   cardActionWebhookPath?: string;
+  notificationWebhookEnabled?: boolean;
+  notificationWebhookHost?: string;
+  notificationWebhookPort?: number;
+  notificationWebhookPath?: string;
+  /** Bearer token required by the external notification webhook. */
+  notificationWebhookToken?: string;
   language?: "zh" | "en";
   reactEmoji?: string;
   autoStart?: boolean;

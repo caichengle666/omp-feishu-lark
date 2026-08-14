@@ -5,6 +5,7 @@ export type BotCommand =
   | { name: "resume" }
   | { name: "model" }
   | { name: "stop" }
+  | { name: "help" }
   | { name: "doctor" }
   | { name: "version" }
   | { name: "workspace"; path?: string };
@@ -93,6 +94,7 @@ export function parseBotCommand(text: string): BotCommand | undefined {
   if (lower === "/resume") return { name: "resume" };
   if (lower === "/model") return { name: "model" };
   if (lower === "/stop") return { name: "stop" };
+  if (lower === "/feishu help" || lower === "/help") return { name: "help" };
   if (lower === "/feishu doctor" || lower === "/doctor") return { name: "doctor" };
   if (lower === "/feishu version" || lower === "/version") return { name: "version" };
   const workspaceMatch = trimmed.match(/^\/workspace(?:\s+(.+))?$/si);

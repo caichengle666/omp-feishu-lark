@@ -164,7 +164,7 @@ const stagingExtensionDir = join(stagingDir, "extension");
 const stagingSupportDir = join(stagingDir, "support");
 mkdirSync(stagingExtensionDir, { recursive: true });
 mkdirSync(stagingSupportDir, { recursive: true });
-const extensionFiles = ["attachments.ts", "bridge-runtime.ts", "bridge-store.ts", "card-action-webhook.ts", "cards.ts", "config.ts", "conversation-manager.ts", "debug.ts", "dedupe-store.ts", "delivery.ts", "gateway-lock.ts", "index.ts", "message-handler.ts", "messages.ts", "prompt-timeout.ts", "rich-text.ts", "rpc-worker-pool.ts", "setup.ts", "task-status-card.ts", "tencent-asr.ts", "transport.ts", "types.ts"];
+const extensionFiles = ["attachments.ts", "bridge-runtime.ts", "bridge-store.ts", "card-action-webhook.ts", "cards.ts", "config.ts", "conversation-manager.ts", "debug.ts", "dedupe-store.ts", "delivery.ts", "gateway-lock.ts", "help.ts", "index.ts", "message-handler.ts", "messages.ts", "notification-webhook.ts", "prompt-timeout.ts", "rich-text.ts", "rpc-worker-pool.ts", "setup.ts", "task-status-card.ts", "tencent-asr.ts", "transport.ts", "types.ts"];
 for (const file of extensionFiles) {
   writeFileSync(join(stagingExtensionDir, file), readFileSync(join(packageRoot, "extension", file)));
 }
@@ -283,6 +283,12 @@ function validateInstallerConfig(value: Record<string, unknown> | undefined) {
   }
   if (value.promptTimeoutSec !== undefined && (!Number.isFinite(value.promptTimeoutSec) || Number(value.promptTimeoutSec) < 0)) {
     fail(`Invalid promptTimeoutSec in configuration: ${configPath}`);
+  }
+  if (value.notificationWebhookPort !== undefined && (!Number.isInteger(value.notificationWebhookPort) || Number(value.notificationWebhookPort) < 1 || Number(value.notificationWebhookPort) > 65535)) {
+    fail(`Invalid notificationWebhookPort in configuration: ${configPath}`);
+  }
+  if (value.notificationWebhookEnabled === true && (typeof value.notificationWebhookToken !== "string" || !value.notificationWebhookToken.trim())) {
+    fail(`notificationWebhookToken is required when notificationWebhookEnabled is true: ${configPath}`);
   }
 }
 

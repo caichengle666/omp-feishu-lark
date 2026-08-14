@@ -38,6 +38,18 @@ bunx @caichengle/omp-feishu-lark --no-restart
 bunx @caichengle/omp-feishu-lark --workspace DIR
 ```
 
+To update an existing installation to the newest published version, run:
+
+```bash
+bunx @caichengle/omp-feishu-lark@latest
+```
+
+The updater keeps `config.json`, conversation mappings, model configuration,
+and logs. It stops the old supervisor, prepares and compile-checks the complete
+new plugin in a staging directory, atomically replaces the old plugin
+directory, removes staging and backup files, then starts the new supervisor and
+verifies both the Feishu gateway and an OMP RPC worker.
+
 It resolves `bun`/`omp` off PATH, installs runtime dependencies inside the
 plugin directory, asks for credentials, starts the daemon, and
 exits once the gateway reports `connected`. At that point the bot answers in
@@ -58,9 +70,9 @@ this is an OMP compatibility variable, not a Pi plugin dependency.
 ### Architecture (arm64 / x86_64)
 
 The package is architecture-independent and needs no per-arch variant. It ships
-21 `.ts`/`.mjs` source files plus this README — zero binaries, and the installer
-downloads no prebuilt artifacts. Everything arch-specific already lives in the
-`bun`/`omp` you installed beforehand.
+TypeScript/JavaScript source files plus this README — zero plugin binaries, and
+the installer downloads no prebuilt plugin artifacts. Everything arch-specific
+already lives in the `bun`/`omp` you installed beforehand.
 
 The one runtime dependency, `@larksuiteoapi/node-sdk`, is pure JavaScript
 (`axios`, `ws`, `protobufjs`, `lodash.*`, `qs`) with no `.node` addons and no
@@ -116,6 +128,45 @@ an atomic save, so new model entries become available without reinstalling.
 
 Existing `config.json` / `models.yml` are never overwritten — the run reports
 `keeping credentials` and moves on. Use `--reconfigure` to redo them.
+
+### Webhook / CI proactive notifications
+
+The daemon can expose a token-protected HTTP endpoint for CI systems and other
+automation. It is disabled by default and listens only on `127.0.0.1` unless
+you explicitly choose another host. Add these fields to
+`~/.omp/agent/feishu/config.json`:
+
+```json
+{
+  "notificationWebhookEnabled": true,
+  "notificationWebhookHost": "127.0.0.1",
+  "notificationWebhookPort": 3002,
+  "notificationWebhookPath": "/webhook/notify",
+  "notificationWebhookToken": "replace-with-a-long-random-token"
+}
+```
+
+Then run `/feishu restart`. Send a notification to a conversation that has
+already messaged the bot at least once:
+
+```bash
+curl -X POST http://127.0.0.1:3002/webhook/notify \
+  -H "Authorization: Bearer replace-with-a-long-random-token" \
+  -H "Content-Type: application/json" \
+  -d '{"sessionKey":"group:oc_xxx","text":"CI failed","eventId":"github-run-123"}'
+```
+
+`sessionKey` is the existing route key stored in
+`~/.omp/agent/feishu/bridge.json`. `eventId` is optional; when supplied it is
+used to suppress repeat delivery. The same settings can be supplied through
+`FEISHU_NOTIFY_WEBHOOK_ENABLED`, `FEISHU_NOTIFY_WEBHOOK_HOST`,
+`FEISHU_NOTIFY_WEBHOOK_PORT`, `FEISHU_NOTIFY_WEBHOOK_PATH`, and
+`FEISHU_NOTIFY_WEBHOOK_TOKEN`.
+
+### Commands
+
+Run `/feishu help` in OMP, or send `/feishu help` or `/help` to the bot, for a
+Chinese description of every plugin and chat command.
 
 ### Upgrading older installs
 

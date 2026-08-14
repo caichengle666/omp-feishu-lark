@@ -23,7 +23,7 @@ export const CHILD_SESSION_ENV = "PI_FEISHU_CHILD_SESSION";
 
 export const DEFAULT_CONFIG: Pick<
   FeishuConfig,
-  "domain" | "groupPolicy" | "cardActionMode" | "cardActionWebhookHost" | "cardActionWebhookPort" | "cardActionWebhookPath" | "language" | "reactEmoji" | "autoStart" | "promptNotifySec" | "promptTimeoutSec"
+  "domain" | "groupPolicy" | "cardActionMode" | "cardActionWebhookHost" | "cardActionWebhookPort" | "cardActionWebhookPath" | "notificationWebhookEnabled" | "notificationWebhookHost" | "notificationWebhookPort" | "notificationWebhookPath" | "language" | "reactEmoji" | "autoStart" | "promptNotifySec" | "promptTimeoutSec"
 > = {
   domain: "feishu",
   groupPolicy: "open",
@@ -31,6 +31,10 @@ export const DEFAULT_CONFIG: Pick<
   cardActionWebhookHost: "0.0.0.0",
   cardActionWebhookPort: 3001,
   cardActionWebhookPath: "/webhook/card",
+  notificationWebhookEnabled: false,
+  notificationWebhookHost: "127.0.0.1",
+  notificationWebhookPort: 3002,
+  notificationWebhookPath: "/webhook/notify",
   language: "zh",
   reactEmoji: "THUMBSUP",
   autoStart: true,
@@ -75,6 +79,11 @@ export function loadConfig(): FeishuConfig | undefined {
       cardActionWebhookHost: process.env.FEISHU_CARD_ACTION_WEBHOOK_HOST?.trim() || DEFAULT_CONFIG.cardActionWebhookHost,
       cardActionWebhookPort: parsePort(process.env.FEISHU_CARD_ACTION_WEBHOOK_PORT) ?? DEFAULT_CONFIG.cardActionWebhookPort,
       cardActionWebhookPath: normalizeWebhookPath(process.env.FEISHU_CARD_ACTION_WEBHOOK_PATH) || DEFAULT_CONFIG.cardActionWebhookPath,
+      notificationWebhookEnabled: parseEnvBoolean(process.env.FEISHU_NOTIFY_WEBHOOK_ENABLED) ?? DEFAULT_CONFIG.notificationWebhookEnabled,
+      notificationWebhookHost: process.env.FEISHU_NOTIFY_WEBHOOK_HOST?.trim() || DEFAULT_CONFIG.notificationWebhookHost,
+      notificationWebhookPort: parsePort(process.env.FEISHU_NOTIFY_WEBHOOK_PORT) ?? DEFAULT_CONFIG.notificationWebhookPort,
+      notificationWebhookPath: normalizeWebhookPath(process.env.FEISHU_NOTIFY_WEBHOOK_PATH) || DEFAULT_CONFIG.notificationWebhookPath,
+      notificationWebhookToken: process.env.FEISHU_NOTIFY_WEBHOOK_TOKEN?.trim() || undefined,
       language: (process.env.FEISHU_LANGUAGE as "zh" | "en") || DEFAULT_CONFIG.language,
       reactEmoji: process.env.FEISHU_REACT_EMOJI || DEFAULT_CONFIG.reactEmoji,
       autoStart: process.env.FEISHU_AUTO_START ? process.env.FEISHU_AUTO_START !== "0" : DEFAULT_CONFIG.autoStart,
@@ -94,6 +103,11 @@ export function loadConfig(): FeishuConfig | undefined {
     cardActionWebhookHost: cfg.cardActionWebhookHost || DEFAULT_CONFIG.cardActionWebhookHost,
     cardActionWebhookPort: typeof cfg.cardActionWebhookPort === "number" ? cfg.cardActionWebhookPort : DEFAULT_CONFIG.cardActionWebhookPort,
     cardActionWebhookPath: normalizeWebhookPath(cfg.cardActionWebhookPath) || DEFAULT_CONFIG.cardActionWebhookPath,
+    notificationWebhookEnabled: cfg.notificationWebhookEnabled ?? DEFAULT_CONFIG.notificationWebhookEnabled,
+    notificationWebhookHost: cfg.notificationWebhookHost || DEFAULT_CONFIG.notificationWebhookHost,
+    notificationWebhookPort: typeof cfg.notificationWebhookPort === "number" ? cfg.notificationWebhookPort : DEFAULT_CONFIG.notificationWebhookPort,
+    notificationWebhookPath: normalizeWebhookPath(cfg.notificationWebhookPath) || DEFAULT_CONFIG.notificationWebhookPath,
+    notificationWebhookToken: typeof cfg.notificationWebhookToken === "string" && cfg.notificationWebhookToken.trim() ? cfg.notificationWebhookToken.trim() : undefined,
     language: cfg.language || DEFAULT_CONFIG.language,
     reactEmoji: cfg.reactEmoji || DEFAULT_CONFIG.reactEmoji,
     autoStart: cfg.autoStart ?? DEFAULT_CONFIG.autoStart,
@@ -115,6 +129,9 @@ export function validateConfig(value: unknown): FeishuConfig | undefined {
   if (language !== "zh" && language !== "en") return undefined;
   const port = raw.cardActionWebhookPort ?? DEFAULT_CONFIG.cardActionWebhookPort;
   if (typeof port !== "number" || !Number.isInteger(port) || port < 1 || port > 65535) return undefined;
+  const notificationPort = raw.notificationWebhookPort ?? DEFAULT_CONFIG.notificationWebhookPort;
+  if (typeof notificationPort !== "number" || !Number.isInteger(notificationPort) || notificationPort < 1 || notificationPort > 65535) return undefined;
+  if (raw.notificationWebhookEnabled && (typeof raw.notificationWebhookToken !== "string" || !raw.notificationWebhookToken.trim())) return undefined;
   const promptNotifySec = numberOr(raw.promptNotifySec, DEFAULT_CONFIG.promptNotifySec);
   const promptTimeoutSec = numberOr(raw.promptTimeoutSec, DEFAULT_CONFIG.promptTimeoutSec);
   if (promptNotifySec < 0 || promptTimeoutSec < 0) return undefined;
@@ -128,6 +145,11 @@ export function validateConfig(value: unknown): FeishuConfig | undefined {
     cardActionWebhookHost: typeof raw.cardActionWebhookHost === "string" && raw.cardActionWebhookHost.trim() ? raw.cardActionWebhookHost.trim() : DEFAULT_CONFIG.cardActionWebhookHost,
     cardActionWebhookPort: port,
     cardActionWebhookPath: normalizeWebhookPath(raw.cardActionWebhookPath) || DEFAULT_CONFIG.cardActionWebhookPath,
+    notificationWebhookEnabled: typeof raw.notificationWebhookEnabled === "boolean" ? raw.notificationWebhookEnabled : DEFAULT_CONFIG.notificationWebhookEnabled,
+    notificationWebhookHost: typeof raw.notificationWebhookHost === "string" && raw.notificationWebhookHost.trim() ? raw.notificationWebhookHost.trim() : DEFAULT_CONFIG.notificationWebhookHost,
+    notificationWebhookPort: notificationPort,
+    notificationWebhookPath: normalizeWebhookPath(raw.notificationWebhookPath) || DEFAULT_CONFIG.notificationWebhookPath,
+    notificationWebhookToken: typeof raw.notificationWebhookToken === "string" && raw.notificationWebhookToken.trim() ? raw.notificationWebhookToken.trim() : undefined,
     language,
     reactEmoji: typeof raw.reactEmoji === "string" ? raw.reactEmoji : DEFAULT_CONFIG.reactEmoji,
     autoStart: typeof raw.autoStart === "boolean" ? raw.autoStart : DEFAULT_CONFIG.autoStart,
@@ -140,6 +162,14 @@ function parseEnvSeconds(value: string | undefined) {
   if (!value) return undefined;
   const seconds = Number.parseInt(value, 10);
   return Number.isFinite(seconds) && seconds >= 0 ? seconds : undefined;
+}
+
+function parseEnvBoolean(value: string | undefined) {
+  if (value === undefined) return undefined;
+  const normalized = value.trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) return true;
+  if (["0", "false", "no", "off"].includes(normalized)) return false;
+  return undefined;
 }
 
 function numberOr(value: unknown, fallback: number) {

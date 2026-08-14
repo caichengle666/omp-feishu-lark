@@ -13,6 +13,8 @@ import { FeishuBridgeStore } from "./bridge-store.js";
 import { ConversationManager } from "./conversation-manager.js";
 import { FeishuRpcWorkerPool } from "./rpc-worker-pool.js";
 import { FeishuDelivery } from "./delivery.js";
+import { feishuHelpText } from "./help.js";
+import { FeishuNotificationWebhook } from "./notification-webhook.js";
 import { acquireFileLease, acquireGatewayLock, gatewayLockPath, readGatewayOwner, releaseFileLease, type GatewayLockHandle, type GatewayOwner } from "./gateway-lock.js";
 import { FeishuMessageHandler } from "./message-handler.js";
 import { runSetup, uiConfirm } from "./setup.js";
@@ -22,6 +24,7 @@ import type { FeishuConfig, FeishuStatus } from "./types.js";
 
 export default function feishuExtension(pi: ExtensionAPI) {
   let transport: FeishuTransport | undefined;
+  let notificationWebhook: FeishuNotificationWebhook | undefined;
   let gatewayLock: GatewayLockHandle | undefined;
   const bridgeStore = new FeishuBridgeStore();
   const delivery = new FeishuDelivery(() => transport);
@@ -143,6 +146,8 @@ export default function feishuExtension(pi: ExtensionAPI) {
     }
     gatewayLock = lockResult.handle;
     gatewayLock.setOnLost(async () => {
+      await notificationWebhook?.stop();
+      notificationWebhook = undefined;
       await transport?.stop();
       transport = undefined;
       gatewayLock = undefined;
@@ -214,6 +219,10 @@ export default function feishuExtension(pi: ExtensionAPI) {
     });
     try {
       await transport.start();
+      if (cfg.notificationWebhookEnabled) {
+        notificationWebhook = new FeishuNotificationWebhook(cfg, bridgeStore, delivery);
+        await notificationWebhook.start();
+      }
       gatewayLock.startHeartbeat();
       await gatewayLock.update("connected");
       updateStatus("connected");
@@ -223,6 +232,9 @@ export default function feishuExtension(pi: ExtensionAPI) {
       return "started";
     } catch (error) {
       updateStatus(error instanceof BotUnavailableError ? "bot unavailable" : "disconnected");
+      await notificationWebhook?.stop().catch(() => undefined);
+      notificationWebhook = undefined;
+      await transport?.stop().catch(() => undefined);
       await gatewayLock.release();
       gatewayLock = undefined;
       transport = undefined;
@@ -231,6 +243,8 @@ export default function feishuExtension(pi: ExtensionAPI) {
   }
 
   async function stop() {
+    await notificationWebhook?.stop();
+    notificationWebhook = undefined;
     await transport?.stop();
     transport = undefined;
     await rpcWorkers?.disposeAll();
@@ -300,6 +314,7 @@ export default function feishuExtension(pi: ExtensionAPI) {
       `${owner?.status === "connected" ? "OK" : "WARN"} gateway: ${owner ? formatOwner(owner) : "not running"}`,
       `${supervisorPid && processExists(supervisorPid) ? "OK" : "WARN"} supervisor: ${supervisorPid || "not running"}`,
       `${models.length ? "OK" : "FAIL"} models: ${models.length ? `${models.length} available` : "none available; check models.yml/auth"}`,
+      `${cfg?.notificationWebhookEnabled ? (notificationWebhook ? "OK" : "WARN") : "OK"} notification webhook: ${cfg?.notificationWebhookEnabled ? (notificationWebhook?.getEndpointLabel() || "enabled but not running") : "disabled"}`,
       `${existsSync(process.cwd()) ? "OK" : "FAIL"} workspace: ${process.cwd()}`,
       `logs: ${DAEMON_LOG_PATH}`,
     ];
@@ -409,9 +424,9 @@ export default function feishuExtension(pi: ExtensionAPI) {
   }
 
   pi.registerCommand("feishu", {
-    description: "Feishu/Lark: setup, start, stop, restart, refresh, status, doctor, version, debug, autostart, reset",
+    description: "Feishu/Lark: help, setup, start, stop, restart, refresh, status, doctor, version, debug, autostart, reset",
     getArgumentCompletions: (prefix) => {
-      const commands = ["setup", "start", "stop", "restart", "refresh", "status", "doctor", "version", "debug", "autostart", "reset"];
+      const commands = ["help", "setup", "start", "stop", "restart", "refresh", "status", "doctor", "version", "debug", "autostart", "reset"];
       const query = prefix.trim().toLowerCase();
       return commands
         .filter((command) => command.startsWith(query))
@@ -422,6 +437,10 @@ export default function feishuExtension(pi: ExtensionAPI) {
       const [cmdRaw] = args.trim().toLowerCase().split(/\s+/, 1);
       const cmd = cmdRaw || "status";
       try {
+        if (cmd === "help") {
+          ctx.ui.notify(feishuHelpText(), "info");
+          return;
+        }
         if (cmd === "setup") {
           const configToStart = await runSetup(ctx);
           if (configToStart) {
@@ -528,6 +547,7 @@ export default function feishuExtension(pi: ExtensionAPI) {
               `Status: ${lastStatusText || (loadConfig() ? "Feishu: disconnected" : "Feishu: not configured")}`,
               `Gateway owner: ${formatOwner(owner)}`,
               `Config: ${cfg ? `${cfg.domain}, appId=${mask(cfg.appId)}, groupPolicy=${cfg.groupPolicy}, autoStart=${cfg.autoStart !== false}` : "missing"}`,
+              `Notification webhook: ${cfg?.notificationWebhookEnabled ? (notificationWebhook?.getEndpointLabel() || "enabled; check daemon owner") : "disabled"}`,
               `Path: ${CONFIG_PATH}`,
               `Gateway lock: ${gatewayLockPath()}`,
               `Debug: ${DEBUG_LOG_PATH}`,
@@ -558,7 +578,7 @@ export default function feishuExtension(pi: ExtensionAPI) {
           refreshStatusFromState();
           return;
         }
-        ctx.ui.notify("可用命令：/feishu setup | start | stop | restart | refresh | status | doctor | version | debug | autostart | reset", "info");
+        ctx.ui.notify(feishuHelpText(), "info");
       } catch (error) {
         ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
       }
