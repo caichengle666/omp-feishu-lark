@@ -12,6 +12,7 @@ import {
 
 test("recognizes only legacy systemd services that launch this plugin", () => {
   assert.equal(systemdServiceReferencesFeishuPlugin("ExecStart=omp -e /root/omp/feishu-plugin/extension/index.ts\n# omp-feishu"), true);
+  assert.equal(systemdServiceReferencesFeishuPlugin("ExecStart=omp -e /root/.omp/plugins/node_modules/@caichengle/omp-feishu-lark/extension/index.ts"), true);
   assert.equal(systemdServiceReferencesFeishuPlugin("ExecStart=/srv/unrelated/index.ts\n# omp-feishu"), false);
 });
 
@@ -122,4 +123,3 @@ function tempHome() {
   mkdirSync(path, { recursive: true });
   return path;
 }
-

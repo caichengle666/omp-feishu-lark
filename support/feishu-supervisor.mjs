@@ -67,7 +67,14 @@ export async function runSupervisor(argv = process.argv.slice(2)) {
     if (child && child.exitCode === null) {
       try { child.kill(signal === "SIGINT" ? "SIGINT" : "SIGTERM"); } catch {}
       await Promise.race([new Promise((resolve) => child.once("exit", resolve)), sleep(5000)]);
-      if (child.exitCode === null) try { child.kill("SIGKILL"); } catch {}
+      if (child.exitCode === null) {
+        try { child.kill("SIGKILL"); } catch {}
+        await Promise.race([new Promise((resolve) => child.once("exit", resolve)), sleep(5000)]);
+      }
+      if (child.exitCode === null) {
+        log(`daemon ${child.pid} did not exit after SIGKILL; retaining supervisor ownership`);
+        await new Promise((resolve) => child.once("exit", resolve));
+      }
     }
   };
 
@@ -161,4 +168,3 @@ if (import.meta.main) {
     process.exitCode = 1;
   });
 }
-

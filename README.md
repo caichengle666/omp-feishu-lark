@@ -45,6 +45,8 @@ Feishu.
 
 The daemon log rotates at 5 MiB and keeps one previous file as
 `daemon.log.1`; the structured debug log keeps its most recent 1000 entries.
+Debug events are batched into asynchronous writes so card updates do not block
+message handling on slow disks.
 CI runs the type check, tests, and Bun build on Windows, Linux, and macOS.
 
 Every path derives from `$HOME`, so a non-root install works unchanged. The
@@ -228,6 +230,12 @@ The installer and `/feishu start|restart|stop` use the same Bun supervisor on
 Windows, Linux, and macOS. It starts OMP without a shell, keeps RPC stdin open,
 restarts crashed daemons with capped exponential backoff, and shuts down through
 a portable control file before upgrades replace plugin files.
+
+Gateway ownership includes a random launch token and a Linux process-start
+fingerprint. File and spawn locks use renewable leases and never continue
+without mutual exclusion. A restart waits for the old supervisor and gateway
+to exit before starting a replacement, and startup succeeds only when the
+daemon created by that exact launch reports `connected`.
 
 ### 8. Isolated concurrent conversations (`rpc-worker-pool.ts`)
 

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync, watch, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, watch, writeFileSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -7,13 +7,13 @@ import { getAgentDir } from "@oh-my-pi/pi-coding-agent";
 import { RpcClient } from "@oh-my-pi/pi-coding-agent/modes/rpc/rpc-client";
 import { buildModelCard, buildResumeCard, parseModelActionValue, parseResumePageActionValue, parseResumeSelectActionValue } from "./cards.js";
 import { BRIDGE_PATH, CONFIG_PATH, DAEMON_LOG_PATH, DEBUG_LOG_PATH, DEDUPE_PATH, ensureRoot, loadConfig, mask, removePath, STATE_PATH, SUPERVISOR_PID_PATH, SUPERVISOR_STOP_PATH, writeJson } from "./config.js";
-import { debugLog } from "./debug.js";
+import { debugLog, flushDebugLog } from "./debug.js";
 import { FeishuBridgeRuntime } from "./bridge-runtime.js";
 import { FeishuBridgeStore } from "./bridge-store.js";
 import { ConversationManager } from "./conversation-manager.js";
 import { FeishuRpcWorkerPool } from "./rpc-worker-pool.js";
 import { FeishuDelivery } from "./delivery.js";
-import { acquireGatewayLock, gatewayLockPath, readGatewayOwner, type GatewayLockHandle, type GatewayOwner } from "./gateway-lock.js";
+import { acquireFileLease, acquireGatewayLock, gatewayLockPath, readGatewayOwner, releaseFileLease, type GatewayLockHandle, type GatewayOwner } from "./gateway-lock.js";
 import { FeishuMessageHandler } from "./message-handler.js";
 import { runSetup, uiConfirm } from "./setup.js";
 import { buildTaskStatusCard, parseStopTaskActionValue } from "./task-status-card.js";
@@ -46,7 +46,7 @@ export default function feishuExtension(pi: ExtensionAPI) {
 
   const STATUS_KEY = "feishu-connection";
   const STATUS_REFRESH_MS = 2_000;
-  let uiRef: { setStatus?: (key: string, text: string | undefined) => void } | undefined;
+  let uiRef: { setStatus?: (key: string, text: string | undefined) => void; notify?: (message: string, level?: string) => void } | undefined;
   let lastStatusText: string | undefined;
   let statusRefreshTimer: NodeJS.Timeout | undefined;
   const buildTag = process.env.FEISHU_EXT_DEV === "1" ? " [DEV]" : "";
@@ -147,7 +147,12 @@ export default function feishuExtension(pi: ExtensionAPI) {
       transport = undefined;
       gatewayLock = undefined;
       updateStatus(loadConfig() ? "owned" : "not configured");
-      if (process.env.PI_FEISHU_DAEMON === "1") process.exit(0);
+      if (process.env.PI_FEISHU_DAEMON === "1") {
+        await flushDebugLog();
+        process.exit(0);
+      } else {
+        uiRef?.notify?.("飞书连接已由另一个进程接管。本会话仍可继续使用；运行 /feishu status 查看当前 owner。", "warning");
+      }
     });
     transport = new FeishuTransport(cfg, (msg) => messageHandler.handle(msg), async (action) => {
       const copy = parseCopyMarkdownActionValue(action.value);
@@ -328,9 +333,13 @@ export default function feishuExtension(pi: ExtensionAPI) {
         await stop();
       } else if (owner && takeover) {
         const supervisorPid = readPidFile(SUPERVISOR_PID_PATH);
-        if (supervisorPid) writeFileSync(SUPERVISOR_STOP_PATH, `${Date.now()}\n`, "utf8");
+        if (supervisorPid) {
+          writeFileSync(SUPERVISOR_STOP_PATH, `${Date.now()}\n`, "utf8");
+          if (!await waitForProcessExit(supervisorPid, 15_000)) throw new Error(`Supervisor ${supervisorPid} did not stop`);
+          await waitForPathRemoval(SUPERVISOR_PID_PATH, 2_000);
+        }
         else try { process.kill(owner.pid, "SIGTERM"); } catch {}
-        await waitForProcessExit(owner.pid, 10_000);
+        if (!await waitForProcessExit(owner.pid, 10_000)) throw new Error(`Gateway owner ${owner.pid} did not stop`);
       }
 
       // Re-check while holding the spawn lock. Another TUI may have started it
@@ -342,6 +351,7 @@ export default function feishuExtension(pi: ExtensionAPI) {
 
       ensureRoot();
       const spec = daemonSpec();
+      const launchToken = `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
       if (!existsSync(spec.supervisorPath)) throw new Error(`Feishu supervisor is missing: ${spec.supervisorPath}`);
       const child = spawn(spec.bunBin, [
         spec.supervisorPath,
@@ -355,13 +365,13 @@ export default function feishuExtension(pi: ExtensionAPI) {
       ], {
         detached: true,
         cwd: process.cwd(),
-        env: process.env,
+        env: { ...process.env, FEISHU_LAUNCH_TOKEN: launchToken },
         stdio: "ignore",
         windowsHide: true,
       });
       child.unref();
 
-      const connectedOwner = await waitForGatewayConnection(15_000);
+      const connectedOwner = await waitForGatewayConnection(launchToken, daemonStartTimeoutMs());
       if (!connectedOwner) {
         throw new Error(`Feishu gateway did not connect. Read the log: ${DAEMON_LOG_PATH}`);
       }
@@ -377,10 +387,14 @@ export default function feishuExtension(pi: ExtensionAPI) {
     }
     try {
       const supervisorPid = readPidFile(SUPERVISOR_PID_PATH);
-      if (supervisorPid) writeFileSync(SUPERVISOR_STOP_PATH, `${Date.now()}\n`, "utf8");
+      if (supervisorPid) {
+        writeFileSync(SUPERVISOR_STOP_PATH, `${Date.now()}\n`, "utf8");
+        if (!await waitForProcessExit(supervisorPid, 15_000)) throw new Error(`Supervisor ${supervisorPid} did not stop`);
+        await waitForPathRemoval(SUPERVISOR_PID_PATH, 2_000);
+      }
       else if (owner?.pid) process.kill(owner.pid, "SIGTERM");
       else return { status: "none" as const };
-      await sleep(1000);
+      if (owner?.pid && !await waitForProcessExit(owner.pid, 10_000)) throw new Error(`Gateway owner ${owner.pid} did not stop`);
       return { status: "stopped" as const, owner };
     } catch (error) {
       return { status: "error" as const, owner, error };
@@ -597,6 +611,7 @@ export default function feishuExtension(pi: ExtensionAPI) {
 
   pi.on("session_shutdown", async () => {
     await stop();
+    await flushDebugLog();
     clearStatus();
   });
 }
@@ -640,16 +655,17 @@ function processExists(pid: number) {
 async function waitForProcessExit(pid: number, timeoutMs: number) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    try { process.kill(pid, 0); } catch { return; }
+    try { process.kill(pid, 0); } catch { return true; }
     await sleep(100);
   }
+  return false;
 }
 
-async function waitForGatewayConnection(timeoutMs: number) {
+async function waitForGatewayConnection(launchToken: string, timeoutMs: number) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const owner = readGatewayOwner();
-    if (owner?.status === "connected") return owner;
+    if (owner?.status === "connected" && owner.launchToken === launchToken) return owner;
     await sleep(250);
   }
   return undefined;
@@ -657,32 +673,22 @@ async function waitForGatewayConnection(timeoutMs: number) {
 
 async function withDaemonSpawnLock<T>(fn: () => Promise<T>): Promise<T> {
   const lockPath = `${gatewayLockPath()}.spawn.lock`;
-  for (let attempt = 0; attempt < 40; attempt += 1) {
-    if (tryAcquireSpawnLock(lockPath)) {
-      try {
-        return await fn();
-      } finally {
-        try { rmSync(lockPath, { recursive: true, force: true }); } catch {}
-      }
-    }
-    await sleep(25);
-  }
-  // Last resort: run without the spawn lock. The daemon-side gateway lock still
-  // prevents duplicate live Feishu connections.
-  return fn();
+  const lease = await acquireFileLease(lockPath);
+  try { return await fn(); } finally { releaseFileLease(lease); }
 }
 
-function tryAcquireSpawnLock(lockPath: string) {
-  try {
-    mkdirSync(lockPath, { recursive: false });
-    return true;
-  } catch {
-    try {
-      const age = Date.now() - statSync(lockPath).mtimeMs;
-      if (age > 30_000) rmSync(lockPath, { recursive: true, force: true });
-    } catch {}
-    return false;
+async function waitForPathRemoval(path: string, timeoutMs: number) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!existsSync(path)) return;
+    await sleep(50);
   }
+  throw new Error(`Timed out waiting for cleanup: ${path}`);
+}
+
+function daemonStartTimeoutMs() {
+  const seconds = Number.parseInt(process.env.OMP_FEISHU_TIMEOUT || "", 10);
+  return (Number.isFinite(seconds) && seconds > 0 ? seconds : 120) * 1000;
 }
 
 function sleep(ms: number) {

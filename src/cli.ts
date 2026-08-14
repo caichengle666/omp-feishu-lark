@@ -217,6 +217,7 @@ const logPath = join(runtimeDir, "daemon.log");
 const daemonArgs = ["--mode", "rpc", "--no-extensions", "--no-skills", "--allow-home", "--cwd", workspace, "-e", join(pluginDir, "extension", "index.ts")];
 const daemonExecutable = compatibleOmpCli ? bunBin : ompBin;
 const daemonLaunchArgs = compatibleOmpCli ? [compatibleOmpCli, ...daemonArgs] : daemonArgs;
+const launchToken = `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 const launched = spawn(bunBin, [
   join(pluginDir, "support", "feishu-supervisor.mjs"),
   "--cwd", workspace,
@@ -234,6 +235,7 @@ const launched = spawn(bunBin, [
     ...(rpcOmpCli ? { OMP_CLI_PATH: rpcOmpCli } : {}),
     ...(process.env.PI_CODING_AGENT_DIR || process.env.OMP_AGENT_DIR ? { PI_CODING_AGENT_DIR: agentDir } : {}),
     FEISHU_PLUGIN_VERSION: packageManifest.version,
+    FEISHU_LAUNCH_TOKEN: launchToken,
   },
   stdio: "ignore",
   windowsHide: true,
@@ -241,7 +243,7 @@ const launched = spawn(bunBin, [
 launched.unref();
 
 info(`Waiting for the Feishu gateway (up to ${timeoutSeconds} seconds)...`);
-if (await waitForConnected(lockPath, timeoutSeconds * 1000)) {
+if (await waitForConnected(lockPath, launchToken, timeoutSeconds * 1000)) {
   ok("Feishu gateway connected");
   info("Checking that an OMP RPC worker can start...");
   try {
@@ -321,7 +323,7 @@ async function stopExistingDaemon(path: string) {
       else {
         try { process.kill(owner.pid, "SIGTERM"); } catch {}
       }
-      await waitForProcessExit(owner.pid, 10_000);
+      if (!await waitForProcessExit(owner.pid, 15_000)) fail(`Existing Feishu daemon ${owner.pid} did not stop; plugin files were not replaced.`);
     }
   }
   try { rmSync(path, { force: true, maxRetries: 3, retryDelay: 200 }); } catch {}
@@ -333,7 +335,7 @@ async function stopExistingProcess(pidPath: string, stopPath: string) {
     const pid = Number.parseInt(readFileSync(pidPath, "utf8").trim(), 10);
     if (Number.isSafeInteger(pid) && pid > 0 && processExists(pid)) {
       writeFileSync(stopPath, `${Date.now()}\n`, "utf8");
-      await waitForProcessExit(pid, 10_000);
+      if (!await waitForProcessExit(pid, 15_000)) fail(`Existing Feishu supervisor ${pid} did not stop; plugin files were not replaced.`);
     }
   } catch {}
   try { rmSync(pidPath, { force: true }); } catch {}
@@ -376,6 +378,7 @@ async function checkFeishuApp(value: Record<string, unknown> | undefined) {
 async function waitForProcessExit(pid: number, timeoutMs: number) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline && processExists(pid)) await Bun.sleep(200);
+  return !processExists(pid);
 }
 
 function processExists(pid: number) {
@@ -383,7 +386,7 @@ function processExists(pid: number) {
   try { process.kill(pid, 0); return true; } catch { return false; }
 }
 
-async function waitForConnected(path: string, timeoutMs: number) {
+async function waitForConnected(path: string, launchToken: string, timeoutMs: number) {
   return await new Promise<boolean>((resolve) => {
     let done = false;
     let watcher: ReturnType<typeof watch> | undefined;
@@ -397,8 +400,8 @@ async function waitForConnected(path: string, timeoutMs: number) {
     };
     const check = () => {
       try {
-        const lock = JSON.parse(readFileSync(path, "utf8")) as Record<string, { status?: string }>;
-        if (Object.values(lock).some((entry) => entry?.status === "connected")) finish(true);
+        const lock = JSON.parse(readFileSync(path, "utf8")) as Record<string, { status?: string; launchToken?: string }>;
+        if (Object.values(lock).some((entry) => entry?.status === "connected" && entry.launchToken === launchToken)) finish(true);
       } catch {}
     };
     try { watcher = watch(dirname(path), () => check()); } catch {}

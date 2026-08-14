@@ -50,7 +50,12 @@ test("starts the detached Feishu gateway through the shared cross-platform super
   const source = readFileSync(extensionPath, "utf8");
   assert.match(source, /feishu-supervisor\.mjs/);
   assert.match(source, /"--stop", SUPERVISOR_STOP_PATH/);
-  assert.match(source, /waitForGatewayConnection\(15_000\)/);
+  assert.match(source, /waitForGatewayConnection\(launchToken, daemonStartTimeoutMs\(\)\)/);
+  assert.match(source, /FEISHU_LAUNCH_TOKEN: launchToken/);
+  assert.match(source, /owner\.launchToken === launchToken/);
+  assert.match(source, /await waitForProcessExit\(supervisorPid, 15_000\)/);
+  assert.match(source, /acquireFileLease\(lockPath\)/);
+  assert.doesNotMatch(source, /return fn\(\);/);
   assert.doesNotMatch(source, /powershell|tail -f|spawn\("bash"/i);
 });
 
@@ -74,6 +79,9 @@ test("resolves RPC workers from a stable OMP CLI path", () => {
   assert.match(installerSource, /PI_CODING_AGENT_DIR/);
   assert.match(installerSource, /agentDir/);
   assert.match(installerSource, /OMP_PROFILE/);
+  assert.match(installerSource, /FEISHU_LAUNCH_TOKEN: launchToken/);
+  assert.match(installerSource, /entry\.launchToken === launchToken/);
+  assert.match(installerSource, /Existing Feishu supervisor.*did not stop/);
 });
 
 test("passes the resolved model into the Feishu OMP session without awaiting its own cache", () => {
@@ -113,4 +121,9 @@ test("exposes doctor/version commands to Feishu messages as well as OMP", () => 
   assert.match(messagesSource, /\/feishu doctor/);
   assert.match(messagesSource, /\/feishu version/);
   assert.match(handlerSource, /command\.name === "doctor" \|\| command\.name === "version"/);
+});
+
+test("notifies an interactive OMP session when gateway ownership is lost", () => {
+  const source = readFileSync(extensionPath, "utf8");
+  assert.match(source, /uiRef\?\.notify\?\.\("飞书连接已由另一个进程接管/);
 });

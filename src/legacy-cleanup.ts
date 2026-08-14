@@ -37,7 +37,11 @@ export function findLegacyPluginDirectories(homeDir: string, pluginDir: string) 
 
 export function systemdServiceReferencesFeishuPlugin(service: string) {
   return service.includes("omp-feishu")
-    && (service.includes("feishu-plugin/extension/index.ts") || service.includes(".pi/extensions/feishu/extension/index.ts"));
+    && (
+      service.includes("feishu-plugin/extension/index.ts")
+      || service.includes(".pi/extensions/feishu/extension/index.ts")
+      || service.includes(".omp/plugins/node_modules/@caichengle/omp-feishu-lark/extension/index.ts")
+    );
 }
 
 export function ompRegistryNeedsUpgrade(homeDir: string, version: string) {
@@ -130,4 +134,3 @@ function readPid(path: string) {
     return undefined;
   }
 }
-
