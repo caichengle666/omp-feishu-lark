@@ -64,16 +64,18 @@ export async function runSupervisor(argv = process.argv.slice(2)) {
     if (stableTimer) clearTimeout(stableTimer);
     if (restartTimer) clearTimeout(restartTimer);
     wakeRestart?.();
-    if (child && child.exitCode === null) {
-      try { child.kill(signal === "SIGINT" ? "SIGINT" : "SIGTERM"); } catch {}
-      await Promise.race([new Promise((resolve) => child.once("exit", resolve)), sleep(5000)]);
-      if (child.exitCode === null) {
-        try { child.kill("SIGKILL"); } catch {}
-        await Promise.race([new Promise((resolve) => child.once("exit", resolve)), sleep(5000)]);
+    const daemon = child;
+    if (daemon && daemon.exitCode === null) {
+      try { daemon.stdin?.end(); } catch {}
+      try { daemon.kill(signal === "SIGINT" ? "SIGINT" : "SIGTERM"); } catch {}
+      await Promise.race([new Promise((resolve) => daemon.once("exit", resolve)), sleep(5000)]);
+      if (daemon.exitCode === null) {
+        try { daemon.kill("SIGKILL"); } catch {}
+        await Promise.race([new Promise((resolve) => daemon.once("exit", resolve)), sleep(5000)]);
       }
-      if (child.exitCode === null) {
-        log(`daemon ${child.pid} did not exit after SIGKILL; retaining supervisor ownership`);
-        await new Promise((resolve) => child.once("exit", resolve));
+      if (daemon.exitCode === null) {
+        log(`daemon ${daemon.pid} did not exit after SIGKILL; retaining supervisor ownership`);
+        await new Promise((resolve) => daemon.once("exit", resolve));
       }
     }
   };

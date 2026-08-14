@@ -39,7 +39,7 @@ test("supervisor rotates daemon logs at the configured size", () => {
   rmSync(root, { recursive: true, force: true });
 });
 
-test("supervisor keeps daemon stdin open and removes pid file on SIGTERM", async () => {
+test("supervisor stops cleanly while the daemon exits during stop", async () => {
   const root = join(tmpdir(), `omp-feishu-supervisor-${process.pid}-${Date.now()}`);
   mkdirSync(root, { recursive: true });
   const childScript = join(root, "child.mjs");
@@ -48,9 +48,11 @@ test("supervisor keeps daemon stdin open and removes pid file on SIGTERM", async
   const pidPath = join(root, "supervisor.pid");
   const stopPath = join(root, "supervisor.stop");
   writeFileSync(childScript, [
-    "import { writeFileSync } from 'node:fs';",
+    "import { existsSync, writeFileSync } from 'node:fs';",
     `writeFileSync(${JSON.stringify(childReady)}, 'ready');`,
     "process.stdin.resume();",
+    `const timer = setInterval(() => { if (existsSync(${JSON.stringify(stopPath)})) process.exit(0); }, 10);`,
+    "timer.unref?.();",
   ].join("\n"));
 
   const supervisor = spawn(process.execPath, [
@@ -66,13 +68,28 @@ test("supervisor keeps daemon stdin open and removes pid file on SIGTERM", async
 
   await waitFor(() => existsSync(childReady) && existsSync(pidPath), 5000);
   assert.equal(Number(readFileSync(pidPath, "utf8").trim()), supervisor.pid);
-  await new Promise((resolveExit) => {
+  const exitCode = await new Promise((resolveExit) => {
     supervisor.once("exit", resolveExit);
     writeFileSync(stopPath, "stop");
   });
+  assert.equal(exitCode, 0);
   await waitFor(() => !existsSync(pidPath), 2000);
-  assert.match(readFileSync(logPath, "utf8"), /starting daemon/);
+  const log = readFileSync(logPath, "utf8");
+  assert.match(log, /starting daemon/);
+  assert.match(log, /supervisor stopped/);
   rmSync(root, { recursive: true, force: true });
+});
+
+test("supervisor stop keeps a local daemon reference across async stop waits", () => {
+  const source = readFileSync(resolve("support/feishu-supervisor.mjs"), "utf8");
+  const start = source.indexOf("const stop = async");
+  const end = source.indexOf("process.on(\"SIGINT\"", start);
+  assert.ok(start >= 0 && end > start);
+  const stopSource = source.slice(start, end);
+  assert.match(stopSource, /const daemon = child/);
+  assert.doesNotMatch(stopSource, /child\.exitCode/);
+  assert.doesNotMatch(stopSource, /child\.kill/);
+  assert.doesNotMatch(stopSource, /child\.pid/);
 });
 
 async function waitFor(predicate, timeoutMs) {
@@ -83,4 +100,3 @@ async function waitFor(predicate, timeoutMs) {
   }
   assert.fail(`condition not met within ${timeoutMs}ms`);
 }
-
