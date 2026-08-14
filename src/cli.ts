@@ -178,6 +178,8 @@ writeFileSync(stagingPackagePath, `${JSON.stringify({
   name: "omp-feishu-runtime",
   private: true,
   type: "module",
+  version: packageManifest.version,
+  description: "@caichengle/omp-feishu-lark installed runtime",
   dependencies: {
     "@larksuiteoapi/node-sdk": "^1.73.0",
     "qrcode-terminal": "^0.12.0",

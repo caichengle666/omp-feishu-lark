@@ -284,10 +284,15 @@ export default function feishuExtension(pi: ExtensionAPI) {
     try {
       const packagePath = join(dirname(fileURLToPath(import.meta.url)), "..", "package.json");
       const manifest = JSON.parse(readFileSync(packagePath, "utf8"));
-      return typeof manifest.version === "string" ? manifest.version : "unknown";
-    } catch {
-      return "unknown";
-    }
+      if (typeof manifest.version === "string" && manifest.version) return manifest.version;
+    } catch {}
+    try {
+      const lockPath = join(getAgentDir(), "..", "plugins", "omp-plugins.lock.json");
+      const lock = JSON.parse(readFileSync(lockPath, "utf8"));
+      const version = lock?.plugins?.["@caichengle/omp-feishu-lark"]?.version;
+      if (typeof version === "string" && version) return version;
+    } catch {}
+    return "unknown";
   }
 
   function versionReport() {

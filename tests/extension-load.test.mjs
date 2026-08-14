@@ -115,6 +115,15 @@ test("provides doctor/version diagnostics and injects the release version into d
   assert.match(installerSource, /FEISHU_PLUGIN_VERSION/);
 });
 
+test("keeps the release version readable after the installer rewrites runtime package.json", () => {
+  const source = readFileSync(extensionPath, "utf8");
+  const installerSource = readFileSync(join(repoRoot, "src", "cli.ts"), "utf8");
+  assert.match(source, /omp-plugins\.lock\.json/);
+  assert.match(source, /FEISHU_PLUGIN_VERSION/);
+  assert.match(installerSource, /version: packageManifest\.version/);
+  assert.match(installerSource, /FEISHU_PLUGIN_VERSION: packageManifest\.version/);
+});
+
 test("exposes doctor/version commands to Feishu messages as well as OMP", () => {
   const messagesSource = readFileSync(join(repoRoot, "extension", "messages.ts"), "utf8");
   const handlerSource = readFileSync(join(repoRoot, "extension", "message-handler.ts"), "utf8");
