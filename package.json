@@ -1,6 +1,6 @@
 {
   "name": "@caichengle/omp-feishu-lark",
-  "version": "0.4.12",
+  "version": "0.4.13",
   "description": "Feishu/Lark bridge for Pi coding agent — chat with Pi from Feishu or Lark",
   "type": "module",
   "license": "MIT",
@@ -15,7 +15,7 @@
     "access": "public"
   },
   "bin": {
-    "omp-feishu": "src/cli.ts"
+    "omp-feishu": "bin/omp-feishu.cjs"
   },
   "omp": {
     "extensions": [
@@ -23,6 +23,7 @@
     ]
   },
   "files": [
+    "bin/**/*.cjs",
     "src/**/*.ts",
     "extension/**/*.ts",
     "tests/**/*.mjs",

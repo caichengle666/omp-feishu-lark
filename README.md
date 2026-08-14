@@ -22,6 +22,10 @@ Install Bun and omp first, then run this once. Nothing else afterwards.
 bunx @caichengle/omp-feishu-lark
 ```
 
+The bin launcher is Node-compatible and resolves Bun from `BUN_BIN_PATH`, the
+standard `~/.bun/bin` / `%USERPROFILE%\.bun\bin`, or PATH, so `npx` and npm
+scripts also work even when Bun is not on the current PATH.
+
 The Bun installer supports Windows, Linux, and macOS. It installs runtime state under
 `~/.omp` (or `PI_CODING_AGENT_DIR` when set), uses the package-compatible OMP CLI, migrates an existing legacy
 `~/.pi/agent/feishu/config.json`, and waits until the gateway reports
