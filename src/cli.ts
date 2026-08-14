@@ -4,6 +4,9 @@ import { spawn, spawnSync } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
+import { acquireInstallerLease, releaseInstallerLease } from "./installer-lock.js";
+import { isSupervisorProcessAlive, readSupervisorRecord, writeStopRequest } from "../support/feishu-supervisor.mjs";
+import { GATEWAY_LOCK_KEY, parseLocksFile, removeGatewayLockKey } from "./installer-state.js";
 import { cleanupLegacyInstallations } from "./legacy-cleanup.js";
 import { verifyRpcWorkerReady } from "./rpc-self-test.js";
 
@@ -105,6 +108,7 @@ const supportDir = join(pluginDir, "support");
 const supervisorPath = join(supportDir, "feishu-supervisor.mjs");
 const supervisorPidPath = join(runtimeDir, "supervisor.pid");
 const supervisorStopPath = join(runtimeDir, "supervisor.stop");
+const installLockPath = join(runtimeDir, "install.lock");
 const legacyConfigPath = join(homeDir, ".pi", "agent", "feishu", "config.json");
 workspace = workspace || homeDir;
 
@@ -113,6 +117,15 @@ info(`target: ${pluginDir}`);
 ok(`bun: ${bunBin}`);
 ok(`omp: ${ompBin}`);
 if (pythonBin) ok(`python: ${pythonBin}`); else ok("python: not found (ASR 转写不可用)");
+
+let installLease: Awaited<ReturnType<typeof acquireInstallerLease>> | undefined;
+try {
+  installLease = await acquireInstallerLease(installLockPath);
+} catch (error) {
+  fail(`Another Feishu install/upgrade is already in progress: ${error instanceof Error ? error.message : String(error)}`);
+}
+process.on("exit", () => { if (installLease) releaseInstallerLease(installLease); });
+ok("installer lock acquired");
 
 if (!existsSync(configPath) && existsSync(legacyConfigPath)) {
   mkdirSync(runtimeDir, { recursive: true });
@@ -151,8 +164,6 @@ if (restart) {
     bunBin,
     version: packageManifest.version,
   })) ok(message);
-  await stopExistingProcess(supervisorPidPath, supervisorStopPath);
-  await stopExistingDaemon(lockPath);
 }
 
 await checkFeishuApp(config);
@@ -203,6 +214,18 @@ if (compiled.status !== 0) {
 }
 ok("Plugin compile check passed");
 
+if (restart) {
+  mkdirSync(runtimeDir, { recursive: true });
+  for (const message of cleanupLegacyInstallations({
+    homeDir,
+    pluginDir,
+    bunBin,
+    version: packageManifest.version,
+  })) ok(message);
+  await stopExistingProcess(supervisorPidPath, supervisorStopPath);
+  await stopExistingDaemon(lockPath);
+}
+
 replacePluginDirectory(stagingDir, pluginDir);
 removeDirectory(stagingDir);
 ok("Old plugin files replaced and temporary files removed");
@@ -217,8 +240,8 @@ mkdirSync(runtimeDir, { recursive: true });
 
 const logPath = join(runtimeDir, "daemon.log");
 const daemonArgs = ["--mode", "rpc", "--no-extensions", "--no-skills", "--allow-home", "--cwd", workspace, "-e", join(pluginDir, "extension", "index.ts")];
-const daemonExecutable = compatibleOmpCli ? bunBin : ompBin;
-const daemonLaunchArgs = compatibleOmpCli ? [compatibleOmpCli, ...daemonArgs] : daemonArgs;
+const daemonExecutable = bunBin;
+const daemonLaunchArgs = compatibleOmpCli ? [compatibleOmpCli, ...daemonArgs] : [ompBin, ...daemonArgs];
 const launchToken = `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 const launched = spawn(bunBin, [
   join(pluginDir, "support", "feishu-supervisor.mjs"),
@@ -321,9 +344,11 @@ async function stopExistingDaemon(path: string) {
   if (!existsSync(path)) return;
   let owner: { pid?: number; heartbeatAt?: string; status?: string } | undefined;
   try {
-    const locks = JSON.parse(readFileSync(path, "utf8")) as Record<string, typeof owner>;
-    owner = locks["pi-feishu-lark.feishu-gateway"];
-  } catch {}
+    const locks = parseLocksFile(readFileSync(path, "utf8"));
+    owner = locks[GATEWAY_LOCK_KEY] as { pid?: number; heartbeatAt?: string; status?: string } | undefined;
+  } catch {
+    fail(`Invalid Feishu daemon lock file. Refusing to replace the running plugin: ${path}`);
+  }
   if (owner?.pid && owner.pid !== process.pid) {
     const heartbeatAge = owner.heartbeatAt ? Date.now() - Date.parse(owner.heartbeatAt) : Number.POSITIVE_INFINITY;
     if (heartbeatAge < 60_000 || processExists(owner.pid)) {
@@ -334,19 +359,22 @@ async function stopExistingDaemon(path: string) {
       if (!await waitForProcessExit(owner.pid, 15_000)) fail(`Existing Feishu daemon ${owner.pid} did not stop; plugin files were not replaced.`);
     }
   }
-  try { rmSync(path, { force: true, maxRetries: 3, retryDelay: 200 }); } catch {}
+  try {
+    const locks = parseLocksFile(readFileSync(path, "utf8"));
+    removeGatewayLockKey(locks);
+    writeFileSync(path, `${JSON.stringify(locks, null, 2)}\n`, "utf8");
+  } catch {}
 }
 
 async function stopExistingProcess(pidPath: string, stopPath: string) {
-  if (!existsSync(pidPath)) return;
-  try {
-    const pid = Number.parseInt(readFileSync(pidPath, "utf8").trim(), 10);
-    if (Number.isSafeInteger(pid) && pid > 0 && processExists(pid)) {
-      writeFileSync(stopPath, `${Date.now()}\n`, "utf8");
-      if (!await waitForProcessExit(pid, 15_000)) fail(`Existing Feishu supervisor ${pid} did not stop; plugin files were not replaced.`);
-    }
-  } catch {}
-  try { rmSync(pidPath, { force: true }); } catch {}
+  const supervisor = readSupervisorRecord(pidPath);
+  if (!supervisor || !isSupervisorProcessAlive(supervisor)) return;
+  writeStopRequest(stopPath, supervisor);
+  if (!await waitForSupervisorExit(supervisor, 15_000)) fail(`Existing Feishu supervisor ${supervisor.pid} did not stop; plugin files were not replaced.`);
+  const current = readSupervisorRecord(pidPath);
+  if (current?.pid === supervisor.pid && (!current.token || current.token === supervisor.token)) {
+    try { rmSync(pidPath, { force: true }); } catch {}
+  }
   try { rmSync(stopPath, { force: true }); } catch {}
 }
 
@@ -387,6 +415,15 @@ async function waitForProcessExit(pid: number, timeoutMs: number) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline && processExists(pid)) await Bun.sleep(200);
   return !processExists(pid);
+}
+
+async function waitForSupervisorExit(supervisor: { pid: number; processStart?: string; token?: string }, timeoutMs: number) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!isSupervisorProcessAlive(supervisor)) return true;
+    await Bun.sleep(200);
+  }
+  return !isSupervisorProcessAlive(supervisor);
 }
 
 function processExists(pid: number) {

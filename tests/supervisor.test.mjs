@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawn } from "node:child_process";
 import test from "node:test";
-import { appendRotatingLog, parseSupervisorArgs, restartDelay } from "../support/feishu-supervisor.mjs";
+import { EventEmitter } from "node:events";
+import { appendRotatingLog, parseSupervisorArgs, readSupervisorRecord, restartDelay, shouldStopRequested, stopChild, writeStopRequest, writeSupervisorRecord } from "../support/feishu-supervisor.mjs";
 
 test("supervisor parses one cross-platform executable and argument array", () => {
   assert.deepEqual(parseSupervisorArgs([
@@ -67,7 +68,9 @@ test("supervisor stops cleanly while the daemon exits during stop", async () => 
   ], { stdio: "ignore" });
 
   await waitFor(() => existsSync(childReady) && existsSync(pidPath), 5000);
-  assert.equal(Number(readFileSync(pidPath, "utf8").trim()), supervisor.pid);
+  const pidRecord = readSupervisorRecord(pidPath);
+  assert.equal(pidRecord?.pid, supervisor.pid);
+  assert.equal(typeof pidRecord?.token, "string");
   const exitCode = await new Promise((resolveExit) => {
     supervisor.once("exit", resolveExit);
     writeFileSync(stopPath, "stop");
@@ -86,10 +89,46 @@ test("supervisor stop keeps a local daemon reference across async stop waits", (
   const end = source.indexOf("process.on(\"SIGINT\"", start);
   assert.ok(start >= 0 && end > start);
   const stopSource = source.slice(start, end);
-  assert.match(stopSource, /const daemon = child/);
+  assert.match(stopSource, /await stopChild\(child, log, signal\)/);
   assert.doesNotMatch(stopSource, /child\.exitCode/);
   assert.doesNotMatch(stopSource, /child\.kill/);
   assert.doesNotMatch(stopSource, /child\.pid/);
+});
+
+test("stopChild still waits on the captured daemon after the caller clears its reference", async () => {
+  let child = new EventEmitter();
+  child.exitCode = null;
+  child.pid = 42_001;
+  child.stdin = { end() { this.ended = true; } };
+  const daemon = child;
+  const signals = [];
+  child.kill = (signal) => {
+    signals.push(signal);
+    setTimeout(() => {
+      daemon.exitCode = 0;
+      daemon.emit("exit", 0, null);
+    }, 1);
+  };
+  const stopPromise = stopChild(child, () => {});
+  child = undefined;
+  await stopPromise;
+  assert.deepEqual(signals, ["SIGTERM"]);
+  assert.equal(daemon.stdin.ended, true);
+});
+
+test("supervisor stop requests are scoped by token and pid file stores metadata", () => {
+  const root = join(tmpdir(), `omp-feishu-supervisor-record-${process.pid}-${Date.now()}`);
+  const pidPath = join(root, "supervisor.pid");
+  const stopPath = join(root, "supervisor.stop");
+  mkdirSync(root, { recursive: true });
+  const record = { pid: 1_234, token: "current-token", processStart: "start-1", startedAt: new Date().toISOString(), command: ["bun", "feishu-supervisor.mjs"] };
+  writeSupervisorRecord(pidPath, record);
+  assert.deepEqual(readSupervisorRecord(pidPath), record);
+  writeStopRequest(stopPath, record);
+  assert.equal(shouldStopRequested(stopPath, record), true);
+  writeStopRequest(stopPath, { pid: record.pid, token: "stale-token" });
+  assert.equal(shouldStopRequested(stopPath, record), false);
+  rmSync(root, { recursive: true, force: true });
 });
 
 async function waitFor(predicate, timeoutMs) {

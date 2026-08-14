@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { removeGatewayLockKey } from "../src/installer-state.ts";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const extensionPath = join(repoRoot, "extension", "index.ts");
@@ -53,7 +54,9 @@ test("starts the detached Feishu gateway through the shared cross-platform super
   assert.match(source, /waitForGatewayConnection\(launchToken, daemonStartTimeoutMs\(\)\)/);
   assert.match(source, /FEISHU_LAUNCH_TOKEN: launchToken/);
   assert.match(source, /owner\.launchToken === launchToken/);
-  assert.match(source, /await waitForProcessExit\(supervisorPid, 15_000\)/);
+  assert.match(source, /readSupervisorRecord\(SUPERVISOR_PID_PATH\)/);
+  assert.match(source, /writeStopRequest\(SUPERVISOR_STOP_PATH, supervisor\)/);
+  assert.match(source, /waitForSupervisorExit\(supervisor, 15_000\)/);
   assert.match(source, /acquireFileLease\(lockPath\)/);
   assert.doesNotMatch(source, /return fn\(\);/);
   assert.doesNotMatch(source, /powershell|tail -f|spawn\("bash"/i);
@@ -65,6 +68,26 @@ test("stages and atomically replaces the plugin directory during upgrades", () =
   assert.match(installerSource, /replacePluginDirectory\(stagingDir, pluginDir\)/);
   assert.match(installerSource, /removeDirectory\(backup\)/);
   assert.match(installerSource, /--no-save/);
+});
+
+test("upgrade prepares the new version before stopping the running daemon/supervisor", () => {
+  const installerSource = readFileSync(join(repoRoot, "src", "cli.ts"), "utf8");
+  const compileOk = installerSource.indexOf("ok(\"Plugin compile check passed\");");
+  const stopSupervisor = installerSource.indexOf("await stopExistingProcess(supervisorPidPath, supervisorStopPath);");
+  const replace = installerSource.indexOf("replacePluginDirectory(stagingDir, pluginDir);");
+  assert.ok(compileOk > 0 && stopSupervisor > compileOk, "new code must compile before the old service is stopped");
+  assert.ok(replace > stopSupervisor, "old service must stop before the directory swap");
+  assert.match(installerSource, /installer lock acquired/);
+  assert.match(installerSource, /acquireInstallerLease\(installLockPath\)/);
+  assert.match(installerSource, /removeGatewayLockKey\(locks\)/);
+  assert.doesNotMatch(installerSource, /rmSync\(path, \{ force: true, maxRetries: 3, retryDelay: 200 \}\)/);
+});
+
+test("installer removes only the Feishu gateway key from locks.json", () => {
+  const locks = { "unrelated.lock": { status: "held" }, "pi-feishu-lark.feishu-gateway": { status: "connected" } };
+  const after = removeGatewayLockKey(locks);
+  assert.deepEqual(Object.keys(after), ["unrelated.lock"]);
+  assert.equal(after["unrelated.lock"].status, "held");
 });
 
 test("resolves RPC workers from a stable OMP CLI path", () => {
@@ -82,6 +105,8 @@ test("resolves RPC workers from a stable OMP CLI path", () => {
   assert.match(installerSource, /FEISHU_LAUNCH_TOKEN: launchToken/);
   assert.match(installerSource, /entry\.launchToken === launchToken/);
   assert.match(installerSource, /Existing Feishu supervisor.*did not stop/);
+  assert.match(installerSource, /const daemonExecutable = bunBin;/);
+  assert.match(installerSource, /\[ompBin, \.\.\.daemonArgs\]/);
 });
 
 test("passes the resolved model into the Feishu OMP session without awaiting its own cache", () => {

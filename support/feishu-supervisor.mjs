@@ -1,5 +1,5 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { dirname } from "node:path";
 
 export function restartDelay(failures) {
@@ -32,6 +32,113 @@ export function parseSupervisorArgs(argv) {
   return { options, command, args: argv.slice(separator + 2) };
 }
 
+export function readSupervisorRecord(path) {
+  try {
+    if (!existsSync(path)) return undefined;
+    const raw = readFileSync(path, "utf8").trim();
+    if (!raw) return undefined;
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      parsed = { pid: Number.parseInt(raw, 10) };
+    }
+    const pid = typeof parsed?.pid === "number" ? parsed.pid : Number.parseInt(parsed?.pid, 10);
+    if (!Number.isSafeInteger(pid) || pid <= 0) return undefined;
+    return {
+      pid,
+      token: typeof parsed.token === "string" && parsed.token ? parsed.token : undefined,
+      processStart: typeof parsed.processStart === "string" && parsed.processStart ? parsed.processStart : undefined,
+      startedAt: typeof parsed.startedAt === "string" && parsed.startedAt ? parsed.startedAt : undefined,
+      command: Array.isArray(parsed.command) ? parsed.command.map(String) : undefined,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+export function writeSupervisorRecord(path, record) {
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `${JSON.stringify(record, null, 2)}\n`, {
+    encoding: "utf8",
+    mode: 0o600,
+  });
+}
+
+export function processStartFingerprint(pid) {
+  if (process.platform === "linux") {
+    try {
+      const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+      const closing = stat.lastIndexOf(")");
+      return closing >= 0 ? stat.slice(closing + 2).trim().split(/\s+/)[19] : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+  if (process.platform === "win32") {
+    try {
+      const result = spawnSync("wmic", ["process", "where", `ProcessId=${pid}`, "get", "CreationDate", "/value"], {
+        encoding: "utf8",
+        windowsHide: true,
+        timeout: 3_000,
+      });
+      const match = /CreationDate=(\d{14})/.exec(result.stdout || "");
+      return match ? match[1] : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
+export function isSupervisorProcessAlive(record) {
+  if (!record || !record.pid || !processAlive(record.pid)) return false;
+  if (record.processStart) {
+    const fingerprint = processStartFingerprint(record.pid);
+    if (fingerprint && fingerprint !== record.processStart) return false;
+  }
+  if (!record.processStart && !record.token) {
+    const readsAsSupervisor = processCommandMatchesSupervisor(record.pid);
+    if (readsAsSupervisor === false) return false;
+  }
+  return true;
+}
+
+export function writeStopRequest(path, record) {
+  mkdirSync(dirname(path), { recursive: true });
+  const request = {
+    pid: record?.pid ?? null,
+    token: record?.token ?? null,
+    requestedAt: new Date().toISOString(),
+  };
+  writeFileSync(path, `${JSON.stringify(request, null, 2)}\n`, "utf8");
+}
+
+export function shouldStopRequested(path, record) {
+  try {
+    const request = JSON.parse(readFileSync(path, "utf8"));
+    if (request?.token && record?.token && request.token !== record.token) return false;
+    return true;
+  } catch {
+    return existsSync(path);
+  }
+}
+
+export async function stopChild(daemon, log = () => {}, signal = "SIGTERM") {
+  if (!daemon || daemon.exitCode !== null) return;
+  try { daemon.stdin?.end(); } catch {}
+  try { daemon.kill(signal === "SIGINT" ? "SIGINT" : "SIGTERM"); } catch {}
+  await Promise.race([new Promise((resolve) => daemon.once("exit", resolve)), sleep(5000)]);
+  if (daemon.exitCode === null) {
+    try { daemon.kill("SIGKILL"); } catch {}
+    await Promise.race([new Promise((resolve) => daemon.once("exit", resolve)), sleep(5000)]);
+  }
+  if (daemon.exitCode === null) {
+    log(`daemon ${daemon.pid} did not exit after SIGKILL; retaining supervisor ownership`);
+    await new Promise((resolve) => daemon.once("exit", resolve));
+  }
+}
+
 export async function runSupervisor(argv = process.argv.slice(2)) {
   const { options, command, args } = parseSupervisorArgs(argv);
   const cwd = options.cwd || process.cwd();
@@ -40,12 +147,20 @@ export async function runSupervisor(argv = process.argv.slice(2)) {
   const stopPath = required(options.stop, "--stop");
   mkdirSync(dirname(logPath), { recursive: true });
 
-  const existingPid = readPid(pidPath);
-  if (existingPid && existingPid !== process.pid && processAlive(existingPid)) {
-    throw new Error(`Supervisor already running (pid ${existingPid})`);
+  const existing = readSupervisorRecord(pidPath);
+  if (existing && isSupervisorProcessAlive(existing)) {
+    throw new Error(`Supervisor already running (pid ${existing.pid})`);
   }
+  const supervisorToken = `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const supervisorRecord = {
+    pid: process.pid,
+    token: supervisorToken,
+    processStart: processStartFingerprint(process.pid),
+    startedAt: new Date().toISOString(),
+    command: [command, ...args],
+  };
   try { rmSync(stopPath, { force: true }); } catch {}
-  writeFileSync(pidPath, `${process.pid}\n`, "utf8");
+  writeSupervisorRecord(pidPath, supervisorRecord);
 
   let child;
   let stopping = false;
@@ -64,26 +179,13 @@ export async function runSupervisor(argv = process.argv.slice(2)) {
     if (stableTimer) clearTimeout(stableTimer);
     if (restartTimer) clearTimeout(restartTimer);
     wakeRestart?.();
-    const daemon = child;
-    if (daemon && daemon.exitCode === null) {
-      try { daemon.stdin?.end(); } catch {}
-      try { daemon.kill(signal === "SIGINT" ? "SIGINT" : "SIGTERM"); } catch {}
-      await Promise.race([new Promise((resolve) => daemon.once("exit", resolve)), sleep(5000)]);
-      if (daemon.exitCode === null) {
-        try { daemon.kill("SIGKILL"); } catch {}
-        await Promise.race([new Promise((resolve) => daemon.once("exit", resolve)), sleep(5000)]);
-      }
-      if (daemon.exitCode === null) {
-        log(`daemon ${daemon.pid} did not exit after SIGKILL; retaining supervisor ownership`);
-        await new Promise((resolve) => daemon.once("exit", resolve));
-      }
-    }
+    await stopChild(child, log, signal);
   };
 
   process.on("SIGINT", () => { void stop("SIGINT"); });
   process.on("SIGTERM", () => { void stop("SIGTERM"); });
   const stopPoll = setInterval(() => {
-    if (existsSync(stopPath)) void stop("SIGTERM");
+    if (shouldStopRequested(stopPath, supervisorRecord)) void stop("SIGTERM");
   }, 200);
 
   try {
@@ -132,7 +234,10 @@ export async function runSupervisor(argv = process.argv.slice(2)) {
     }
   } finally {
     clearInterval(stopPoll);
-    if (readPid(pidPath) === process.pid) try { rmSync(pidPath, { force: true }); } catch {}
+    const current = readSupervisorRecord(pidPath);
+    if (current?.pid === process.pid && (!current.token || current.token === supervisorToken)) {
+      try { rmSync(pidPath, { force: true }); } catch {}
+    }
     try { rmSync(stopPath, { force: true }); } catch {}
     log("supervisor stopped");
   }
@@ -143,16 +248,30 @@ function required(value, name) {
   return value;
 }
 
-function readPid(path) {
-  try {
-    if (!existsSync(path)) return undefined;
-    const pid = Number.parseInt(readFileSync(path, "utf8").trim(), 10);
-    return Number.isSafeInteger(pid) && pid > 0 ? pid : undefined;
-  } catch { return undefined; }
-}
-
 function processAlive(pid) {
   try { process.kill(pid, 0); return true; } catch { return false; }
+}
+
+function processCommandMatchesSupervisor(pid) {
+  if (process.platform === "win32") {
+    try {
+      const result = spawnSync("wmic", ["process", "where", `ProcessId=${pid}`, "get", "CommandLine", "/value"], {
+        encoding: "utf8",
+        windowsHide: true,
+        timeout: 3_000,
+      });
+      const normal = (result.stdout || "").replace(/\0/g, "");
+      return /CommandLine=.*feishu-supervisor\.mjs/i.test(normal) ? true : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+  try {
+    const commandLine = readFileSync(`/proc/${pid}/cmdline`, "utf8");
+    return commandLine.includes("feishu-supervisor.mjs") ? true : false;
+  } catch {
+    return undefined;
+  }
 }
 
 function formatExit(exit) {

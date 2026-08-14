@@ -6,6 +6,7 @@ import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { getAgentDir } from "@oh-my-pi/pi-coding-agent";
 import { RpcClient } from "@oh-my-pi/pi-coding-agent/modes/rpc/rpc-client";
 import { buildModelCard, buildResumeCard, parseModelActionValue, parseResumePageActionValue, parseResumeSelectActionValue } from "./cards.js";
+import { isSupervisorProcessAlive, readSupervisorRecord, writeStopRequest } from "../support/feishu-supervisor.mjs";
 import { BRIDGE_PATH, CONFIG_PATH, DAEMON_LOG_PATH, DEBUG_LOG_PATH, DEDUPE_PATH, ensureRoot, loadConfig, mask, removePath, STATE_PATH, SUPERVISOR_PID_PATH, SUPERVISOR_STOP_PATH, writeJson } from "./config.js";
 import { debugLog, flushDebugLog } from "./debug.js";
 import { FeishuBridgeRuntime } from "./bridge-runtime.js";
@@ -311,13 +312,14 @@ export default function feishuExtension(pi: ExtensionAPI) {
   async function doctorReport() {
     const cfg = loadConfig();
     const owner = gatewayLock?.owner || readGatewayOwner();
-    const supervisorPid = readPidFile(SUPERVISOR_PID_PATH);
+    const supervisor = readSupervisorRecord(SUPERVISOR_PID_PATH);
+    const supervisorRunning = supervisor ? isSupervisorProcessAlive(supervisor) : false;
     const models = await conversations.getAvailableModels().catch(() => []);
     const checks = [
       `${cfg ? "OK" : "FAIL"} config: ${cfg ? CONFIG_PATH : "missing; run /feishu setup"}`,
       `${existsSync(ompCliPath) ? "OK" : "FAIL"} omp cli: ${ompCliPath}`,
       `${owner?.status === "connected" ? "OK" : "WARN"} gateway: ${owner ? formatOwner(owner) : "not running"}`,
-      `${supervisorPid && processExists(supervisorPid) ? "OK" : "WARN"} supervisor: ${supervisorPid || "not running"}`,
+      `${supervisorRunning ? "OK" : "WARN"} supervisor: ${supervisor ? `pid=${supervisor.pid}` : "not running"}`,
       `${models.length ? "OK" : "FAIL"} models: ${models.length ? `${models.length} available` : "none available; check models.yml/auth"}`,
       `${cfg?.notificationWebhookEnabled ? (notificationWebhook ? "OK" : "WARN") : "OK"} notification webhook: ${cfg?.notificationWebhookEnabled ? (notificationWebhook?.getEndpointLabel() || "enabled but not running") : "disabled"}`,
       `${existsSync(process.cwd()) ? "OK" : "FAIL"} workspace: ${process.cwd()}`,
@@ -352,14 +354,15 @@ export default function feishuExtension(pi: ExtensionAPI) {
       if (owner?.pid === process.pid || transport?.isRunning()) {
         await stop();
       } else if (owner && takeover) {
-        const supervisorPid = readPidFile(SUPERVISOR_PID_PATH);
-        if (supervisorPid) {
-          writeFileSync(SUPERVISOR_STOP_PATH, `${Date.now()}\n`, "utf8");
-          if (!await waitForProcessExit(supervisorPid, 15_000)) throw new Error(`Supervisor ${supervisorPid} did not stop`);
+        let stoppedSupervisor = false;
+        const supervisor = readSupervisorRecord(SUPERVISOR_PID_PATH);
+        if (supervisor && isSupervisorProcessAlive(supervisor)) {
+          writeStopRequest(SUPERVISOR_STOP_PATH, supervisor);
+          if (!await waitForSupervisorExit(supervisor, 15_000)) throw new Error(`Supervisor ${supervisor.pid} did not stop`);
           await waitForPathRemoval(SUPERVISOR_PID_PATH, 2_000);
-        }
-        else try { process.kill(owner.pid, "SIGTERM"); } catch {}
-        if (!await waitForProcessExit(owner.pid, 10_000)) throw new Error(`Gateway owner ${owner.pid} did not stop`);
+          stoppedSupervisor = true;
+        } else if (owner?.pid) { try { process.kill(owner.pid, "SIGTERM"); } catch {} }
+        if (!stoppedSupervisor && owner?.pid && !await waitForProcessExit(owner.pid, 10_000)) throw new Error(`Gateway owner ${owner.pid} did not stop`);
       }
 
       // Re-check while holding the spawn lock. Another TUI may have started it
@@ -406,15 +409,16 @@ export default function feishuExtension(pi: ExtensionAPI) {
       return { status: "stopped-current" as const };
     }
     try {
-      const supervisorPid = readPidFile(SUPERVISOR_PID_PATH);
-      if (supervisorPid) {
-        writeFileSync(SUPERVISOR_STOP_PATH, `${Date.now()}\n`, "utf8");
-        if (!await waitForProcessExit(supervisorPid, 15_000)) throw new Error(`Supervisor ${supervisorPid} did not stop`);
+      let stoppedSupervisor = false;
+      const supervisor = readSupervisorRecord(SUPERVISOR_PID_PATH);
+      if (supervisor && isSupervisorProcessAlive(supervisor)) {
+        writeStopRequest(SUPERVISOR_STOP_PATH, supervisor);
+        if (!await waitForSupervisorExit(supervisor, 15_000)) throw new Error(`Supervisor ${supervisor.pid} did not stop`);
         await waitForPathRemoval(SUPERVISOR_PID_PATH, 2_000);
-      }
-      else if (owner?.pid) process.kill(owner.pid, "SIGTERM");
+        stoppedSupervisor = true;
+      } else if (owner?.pid) process.kill(owner.pid, "SIGTERM");
       else return { status: "none" as const };
-      if (owner?.pid && !await waitForProcessExit(owner.pid, 10_000)) throw new Error(`Gateway owner ${owner.pid} did not stop`);
+      if (!stoppedSupervisor && owner?.pid && !await waitForProcessExit(owner.pid, 10_000)) throw new Error(`Gateway owner ${owner.pid} did not stop`);
       return { status: "stopped" as const, owner };
     } catch (error) {
       return { status: "error" as const, owner, error };
@@ -659,14 +663,6 @@ function parseCopyMarkdownActionValue(value: unknown): { copySourceId: string } 
   return { copySourceId: raw.copySourceId };
 }
 
-function readPidFile(path: string) {
-  try {
-    const pid = Number.parseInt(readFileSync(path, "utf8").trim(), 10);
-    return Number.isSafeInteger(pid) && pid > 0 ? pid : undefined;
-  } catch {
-    return undefined;
-  }
-}
 
 function processExists(pid: number) {
   try {
@@ -681,6 +677,15 @@ async function waitForProcessExit(pid: number, timeoutMs: number) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try { process.kill(pid, 0); } catch { return true; }
+    await sleep(100);
+  }
+  return false;
+}
+
+async function waitForSupervisorExit(supervisor: { pid: number; processStart?: string; token?: string }, timeoutMs: number) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!isSupervisorProcessAlive(supervisor)) return true;
     await sleep(100);
   }
   return false;
