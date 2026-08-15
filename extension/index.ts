@@ -143,7 +143,20 @@ export default function feishuExtension(pi: ExtensionAPI) {
       throw new Error(`Missing config. Run /feishu setup first. 配置不存在，请先运行 /feishu setup。`);
     }
     updateStatus("connecting");
-    const lockResult = await acquireGatewayLock(process.cwd(), Boolean(options.takeover));
+    let lockResult = await acquireGatewayLock(process.cwd(), Boolean(options.takeover));
+    // Daemon startup races the previous daemon winding down after an upgrade
+    // replaces the plugin files: the old process owns the lock until its exit.
+    // Instead of exiting immediately (supervisor restart loop / false "found
+    // existing owner"), poll for the stale owner to release ownership so the
+    // switch converges in one generation.
+    if (lockResult.status === "busy" && process.env.PI_FEISHU_DAEMON === "1" && !options.takeover) {
+      const deadline = Date.now() + 20_000;
+      while (Date.now() < deadline) {
+        await sleep(1_000);
+        lockResult = await acquireGatewayLock(process.cwd(), false);
+        if (lockResult.status === "acquired") break;
+      }
+    }
     if (lockResult.status === "busy") {
       updateStatus("owned");
       return { status: "owned" as const, owner: lockResult.owner };
@@ -476,8 +489,17 @@ async function upgradeDaemon(targetVersion: string): Promise<string> {
       throw new Error(`升级安装失败（exit ${result.code ?? "unknown"}）：${detail}`);
     }
     if (process.env.PI_FEISHU_DAEMON === "1") {
-      // daemon 内：文件已换。给外层 reply 留 5s 缓冲，然后退出，由 supervisor 自动拉起新版 daemon。
-      setTimeout(() => process.exit(0), 5_000);
+      // daemon 内：文件已换。先返回（飞书回执发出），稍后主动释放
+      // gateway lock / 停 WS 再退出，由 supervisor 自动拉起新版 daemon。
+      // 不靠 setTimeout 硬退 —— 硬退若被阻塞会导致新旧 daemon 并存。
+      queueMicrotask(() => {
+        void (async () => {
+          await sleep(1500);
+          try { await stop(); } catch {}
+          await flushDebugLog();
+          process.exit(0);
+        })();
+      });
       return `升级文件已就绪（${current} → ${target}），正在重启服务…`;
     }
     await restartDaemon();
@@ -664,10 +686,18 @@ async function upgradeDaemon(targetVersion: string): Promise<string> {
 
   if (bootConfig && bootConfig.autoStart !== false) {
     if (process.env.PI_FEISHU_DAEMON === "1") {
-      start().then((result) => {
+      start().then(async (result) => {
         if (typeof result === "object" && result.status === "owned") {
-          console.error("[feishu] daemon found existing owner, exiting:", formatOwner(result.owner));
-          process.exit(0);
+          // A previous daemon still owns the lock (its supervisor may outlive
+          // the upgrade). Do NOT exit — that makes our supervisor restart us
+          // and spin until the old process dies. Instead keep polling inside
+          // start() so takeover happens the moment the lock frees.
+          console.error("[feishu] daemon found existing owner, waiting for takeover:", formatOwner(result.owner));
+          const claimed = await waitForTakeover(start, 300_000);
+          if (!claimed) {
+            console.error("[feishu] daemon could not take over gateway within 300s; exiting");
+            process.exit(0);
+          }
         }
       }).catch((error) => {
         updateStatus(error instanceof BotUnavailableError ? "bot unavailable" : "disconnected");
@@ -830,6 +860,24 @@ async function waitForPathRemoval(path: string, timeoutMs: number) {
 function daemonStartTimeoutMs() {
   const seconds = Number.parseInt(process.env.OMP_FEISHU_TIMEOUT || "", 10);
   return (Number.isFinite(seconds) && seconds > 0 ? seconds : 120) * 1000;
+}
+
+// Called from the daemon autoStart path after start() reports "owned" while a
+// previous daemon is still winding down. start() already polled for 20s; keep
+// polling until the stale owner releases the lock so this daemon takes over
+// instead of exiting and making the supervisor restart-loop.
+async function waitForTakeover(start: (config?: FeishuConfig, options?: { takeover?: boolean }) => Promise<{ status: string; owner?: GatewayOwner } | string>, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    await sleep(1_000);
+    // 不强制接管：force=true 会覆盖仍存活的 daemon，导致双进程抢占。
+    // 等旧 owner 退出后锁自然可用，非重试即可拿到。
+    const result = await start(undefined, { takeover: false });
+    // start() 成功返回字符串 "started" / "already"，也视为接管成功。
+    if (result === "started" || result === "already") return true;
+    if (typeof result === "object" && result.status !== "owned") return true;
+  }
+  return false;
 }
 
 function sleep(ms: number) {

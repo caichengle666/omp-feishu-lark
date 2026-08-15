@@ -94,6 +94,14 @@ test("upgrade pins the package version and runs the installer asynchronously", (
   assert.doesNotMatch(source, /spawnSync\(spec\.bunBin, args/);
 });
 
+test("daemon takeover waits for the old owner without force-overwriting a live lock", () => {
+  const source = readFileSync(extensionPath, "utf8");
+  assert.match(source, /waitForTakeover\(start, 300_000\)/);
+  assert.match(source, /start\(undefined, \{ takeover: false \}\)/);
+  assert.match(source, /result === "started" \|\| result === "already"/);
+  assert.doesNotMatch(source, /start\(undefined, \{ takeover: true \}\)/);
+});
+
 test("new installer configurations disable the hard prompt timeout", () => {
   const installerSource = readFileSync(join(repoRoot, "src", "cli.ts"), "utf8");
   assert.match(installerSource, /promptTimeoutSec: 0/);

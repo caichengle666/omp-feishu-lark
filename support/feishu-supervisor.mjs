@@ -158,16 +158,34 @@ export function shouldStopRequested(path, record) {
 
 export async function stopChild(daemon, log = () => {}, signal = "SIGTERM") {
   if (!daemon || daemon.exitCode !== null) return;
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const waitExit = (ms) => {
+    // Race: the child may exit before we register the listener (common when
+    // it's already winding down). Check the captured exit code first so an
+    // already-exited child resolves immediately instead of waiting out the
+    // full window.
+    if (daemon.exitCode !== null) return Promise.resolve();
+    const { promise, resolve } = Promise.withResolvers();
+    daemon.once("exit", () => resolve());
+    const timer = setTimeout(() => resolve(), ms);
+    promise.finally(() => clearTimeout(timer));
+    return promise;
+  };
   try { daemon.stdin?.end(); } catch {}
   try { daemon.kill(signal === "SIGINT" ? "SIGINT" : "SIGTERM"); } catch {}
-  await Promise.race([new Promise((resolve) => daemon.once("exit", resolve)), sleep(5000)]);
+  await waitExit(5000);
   if (daemon.exitCode === null) {
     try { daemon.kill("SIGKILL"); } catch {}
-    await Promise.race([new Promise((resolve) => daemon.once("exit", resolve)), sleep(5000)]);
+    await waitExit(5000);
   }
   if (daemon.exitCode === null) {
-    log(`daemon ${daemon.pid} did not exit after SIGKILL; retaining supervisor ownership`);
-    await new Promise((resolve) => daemon.once("exit", resolve));
+    // Never block the supervisor on a stubborn daemon: a zombie child would
+    // otherwise wedge stop() forever (kill -9 cannot reap an uninterruptible
+    // process), leaving upgrade/restart loops spinning. Log and move on; the
+    // gateway lock's stale-owner detection recovers ownership once the old
+    // process actually dies.
+    log(`daemon ${daemon.pid} did not exit after SIGKILL; releasing supervisor without waiting`);
+    await waitExit(1000);
   }
 }
 
