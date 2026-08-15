@@ -25,3 +25,10 @@ test("enabled notification webhook requires a token and validates its port", () 
   assert.equal(config?.notificationWebhookPath, "/ci");
   assert.equal(config?.notificationWebhookToken, "token");
 });
+
+test("card action webhook mode requires a verification token", () => {
+  assert.equal(validateConfig({ ...base, cardActionMode: "webhook" }), undefined);
+  const config = validateConfig({ ...base, cardActionMode: "webhook", cardActionToken: "card-token" });
+  assert.equal(config?.cardActionMode, "webhook");
+  assert.equal(config?.cardActionToken, "card-token");
+});

@@ -28,6 +28,7 @@ export class FeishuCardActionWebhook {
 
   async start() {
     if (this.server) return;
+    if (!this.config.cardActionToken?.trim()) throw new Error("Card action webhook token is required");
     const lark = await import("@larksuiteoapi/node-sdk");
     const dispatcher = new lark.CardActionHandler(
       {

@@ -5,7 +5,13 @@ import { buildMarkdownCardParts, buildPostMessages, chooseMessageMode } from "./
 import { FeishuCardActionWebhook } from "./card-action-webhook.js";
 
 const TEXT_CHUNK_MAX_BYTES = 120 * 1024;
-type RuntimeWSClient = WSClient & { stop?: () => Promise<void> | void };
+const REST_TIMEOUT_MS = 15_000;
+const WS_READY_TIMEOUT_MS = 30_000;
+type RuntimeWSClient = WSClient & {
+  close?: (options?: { force?: boolean }) => void;
+  stop?: () => Promise<void> | void;
+};
+type RuntimeSdkClient = Client & { httpInstance?: { defaults?: { timeout?: number } } };
 
 export class BotUnavailableError extends Error {
   constructor(message: string) {
@@ -44,6 +50,7 @@ export class FeishuTransport {
       domain,
       loggerLevel: lark.LoggerLevel.error,
     });
+    configureSdkRestTimeout(this.sdkClient);
 
     await this.probeBotOpenId();
 
@@ -72,21 +79,40 @@ export class FeishuTransport {
       });
     }
 
+    const ready = createWsReadyGate(WS_READY_TIMEOUT_MS);
     this.wsClient = new lark.WSClient({
       appId: this.config.appId,
       appSecret: this.config.appSecret,
       domain,
       loggerLevel: lark.LoggerLevel.error,
+      onReady: () => {
+        this.running = true;
+        ready.resolve();
+      },
+      onError: (error) => {
+        this.running = false;
+        this.wsDisconnects += 1;
+        debugLog("feishu.ws.disconnected", { count: this.wsDisconnects, error: error.message });
+        ready.reject(error);
+      },
+      onReconnecting: () => {
+        this.running = false;
+        debugLog("feishu.ws.reconnecting", { count: this.wsDisconnects });
+      },
+      onReconnected: () => {
+        this.running = true;
+        debugLog("feishu.ws.reconnected", { at: new Date().toISOString() });
+      },
     });
 
-    this.running = true;
-    debugLog("feishu.ws.connected", { at: new Date().toISOString() });
     try {
-      this.wsClient.start({ eventDispatcher: dispatcher });
+      await this.wsClient.start({ eventDispatcher: dispatcher });
+      await ready.promise;
+      debugLog("feishu.ws.connected", { at: new Date().toISOString() });
     } catch (error) {
       this.running = false;
-      this.wsDisconnects += 1;
-      debugLog("feishu.ws.disconnected", { count: this.wsDisconnects, error: error instanceof Error ? error.message : String(error) });
+      ready.cancel();
+      try { this.wsClient.close?.({ force: true }); } catch {}
       try { await this.cardActionWebhook?.stop(); } catch {}
       this.cardActionWebhook = undefined;
       throw error;
@@ -97,7 +123,11 @@ export class FeishuTransport {
     this.running = false;
     this.wsDisconnects += 1;
     debugLog("feishu.ws.disconnected", { count: this.wsDisconnects, reason: "stop" });
-    try { await this.wsClient?.stop?.(); } catch {}
+    try {
+      if (this.wsClient?.close) this.wsClient.close({ force: true });
+      else await this.wsClient?.stop?.();
+    } catch {}
+    this.wsClient = undefined;
     try { await this.cardActionWebhook?.stop(); } catch {}
     this.cardActionWebhook = undefined;
   }
@@ -434,6 +464,39 @@ export class FeishuTransport {
     // 返回 undefined 让 detectImageMime 走魔数嗅探。
     return { bytes, mimeType: undefined };
   }
+}
+
+export function configureSdkRestTimeout(client: Client, timeoutMs = REST_TIMEOUT_MS) {
+  const http = (client as RuntimeSdkClient).httpInstance;
+  if (http?.defaults) http.defaults.timeout = timeoutMs;
+}
+
+export function createWsReadyGate(timeoutMs: number) {
+  let settled = false;
+  let resolvePromise!: () => void;
+  let rejectPromise!: (error: Error) => void;
+  const promise = new Promise<void>((resolve, reject) => {
+    resolvePromise = resolve;
+    rejectPromise = reject;
+  });
+  const timer = setTimeout(() => {
+    if (settled) return;
+    settled = true;
+    rejectPromise(new Error(`Feishu WebSocket did not connect within ${Math.ceil(timeoutMs / 1000)} seconds`));
+  }, timeoutMs);
+  timer.unref?.();
+  const finish = (action: () => void) => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timer);
+    action();
+  };
+  return {
+    promise,
+    resolve: () => finish(resolvePromise),
+    reject: (error: Error) => finish(() => rejectPromise(error)),
+    cancel: () => finish(() => undefined),
+  };
 }
 
 function splitText(text: string, maxBytes: number) {

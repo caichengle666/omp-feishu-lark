@@ -135,7 +135,7 @@ function asGatewayOwner(value: unknown): GatewayOwner | undefined {
 
 export function isGatewayOwnerStale(owner: GatewayOwner) {
   if (!isProcessAlive(owner.pid)) return true;
-  if (owner.processStart && processStartFingerprint(owner.pid) !== owner.processStart) return true;
+  if (fingerprintMismatch(owner.processStart, processStartFingerprint(owner.pid))) return true;
   return false;
 }
 
@@ -197,10 +197,14 @@ function isFileLeaseAbandoned(path: string) {
     const owner = JSON.parse(readFileSync(join(path, "owner"), "utf8")) as Partial<LeaseOwner>;
     if (typeof owner.pid !== "number") return Date.now() - statSync(path).mtimeMs > FILE_LOCK_STALE_MS;
     if (!isProcessAlive(owner.pid)) return true;
-    return Boolean(owner.processStart && processStartFingerprint(owner.pid) !== owner.processStart);
+    return fingerprintMismatch(owner.processStart, processStartFingerprint(owner.pid));
   } catch {
     return Date.now() - statSync(path).mtimeMs > FILE_LOCK_STALE_MS;
   }
+}
+
+export function fingerprintMismatch(expected: string | undefined, actual: string | undefined) {
+  return Boolean(expected && actual && actual !== expected);
 }
 
 function sleep(ms: number) { return new Promise((resolve) => setTimeout(resolve, ms)); }

@@ -315,6 +315,9 @@ function validateInstallerConfig(value: Record<string, unknown> | undefined) {
   if (value.notificationWebhookEnabled === true && (typeof value.notificationWebhookToken !== "string" || !value.notificationWebhookToken.trim())) {
     fail(`notificationWebhookToken is required when notificationWebhookEnabled is true: ${configPath}`);
   }
+  if (value.cardActionMode === "webhook" && (typeof value.cardActionToken !== "string" || !value.cardActionToken.trim())) {
+    fail(`cardActionToken is required when cardActionMode is webhook: ${configPath}`);
+  }
 }
 
 function removeDirectory(path: string) {

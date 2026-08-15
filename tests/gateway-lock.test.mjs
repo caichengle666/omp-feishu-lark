@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { acquireFileLease, isGatewayOwnerStale, releaseFileLease } from "../extension/gateway-lock.ts";
+import { acquireFileLease, fingerprintMismatch, isGatewayOwnerStale, releaseFileLease } from "../extension/gateway-lock.ts";
 
 test("file lease prevents concurrent ownership and releases by token", async () => {
   const root = join(tmpdir(), `omp-feishu-lease-${process.pid}-${Date.now()}`);
@@ -66,4 +66,9 @@ test("a dead gateway owner is stale", () => {
     heartbeatAt: new Date().toISOString(),
     status: "connected",
   }), true);
+});
+
+test("a transient fingerprint lookup failure does not invalidate a live owner", () => {
+  assert.equal(fingerprintMismatch("known-start", undefined), false);
+  assert.equal(fingerprintMismatch("known-start", "different-start"), true);
 });

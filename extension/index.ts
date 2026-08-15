@@ -7,7 +7,7 @@ import { getAgentDir } from "@oh-my-pi/pi-coding-agent";
 import { RpcClient } from "@oh-my-pi/pi-coding-agent/modes/rpc/rpc-client";
 import { buildModelCard, buildResumeCard, parseModelActionValue, parseResumePageActionValue, parseResumeSelectActionValue } from "./cards.js";
 import { isSupervisorProcessAlive, readSupervisorRecord, recordedProcessStatus, writeStopRequest } from "../support/feishu-supervisor.mjs";
-import { BRIDGE_PATH, CONFIG_PATH, DAEMON_LOG_PATH, DEBUG_LOG_PATH, DEDUPE_PATH, ensureRoot, loadConfig, mask, removePath, STATE_PATH, SUPERVISOR_PID_PATH, SUPERVISOR_STOP_PATH, writeJson } from "./config.js";
+import { BRIDGE_PATH, CONFIG_PATH, DAEMON_LOG_PATH, DEBUG_LOG_PATH, DEDUPE_PATH, ensureRoot, loadConfig, mask, readJson, removePath, STATE_PATH, SUPERVISOR_PID_PATH, SUPERVISOR_STOP_PATH, UPGRADE_NOTICE_PATH, writeJson } from "./config.js";
 import { debugLog, flushDebugLog } from "./debug.js";
 import { FeishuBridgeRuntime } from "./bridge-runtime.js";
 import { FeishuBridgeStore } from "./bridge-store.js";
@@ -245,6 +245,19 @@ export default function feishuExtension(pi: ExtensionAPI) {
       updateStatus("connected");
       // 预热模型列表,避免第一次命令调用时等待 provider 超时
       conversations.warmupModels().catch(() => undefined);
+      // daemon 重启后若发现 upgrade-notice.json，给发出升级命令的 p2p 会话补一条
+      // "升级完成"通知——否则用户在飞书侧只能死等，不知道重启到哪一步了。
+      if (process.env.PI_FEISHU_DAEMON === "1") {
+        try {
+          if (existsSync(UPGRADE_NOTICE_PATH)) {
+            const notice = JSON.parse(readFileSync(UPGRADE_NOTICE_PATH, "utf8")) as { from?: string; to?: string; chatId?: string };
+            if (notice.chatId && notice.from && notice.to) {
+              transport?.sendText(notice.chatId, `✅ 升级完成：${notice.from} → ${notice.to}\n服务已恢复，可以正常使用了。`).catch(() => undefined);
+            }
+            removePath(UPGRADE_NOTICE_PATH);
+          }
+        } catch {}
+      }
 
       return "started";
     } catch (error) {
@@ -489,6 +502,17 @@ async function upgradeDaemon(targetVersion: string): Promise<string> {
       throw new Error(`升级安装失败（exit ${result.code ?? "unknown"}）：${detail}`);
     }
     if (process.env.PI_FEISHU_DAEMON === "1") {
+      // 升级前记录通知目标：找最近活跃的 p2p 会话，新 daemon 启动连上 WS 后
+      // 会读 upgrade-notice.json 给这个会话补发"升级完成"消息 —— 不补，用户只能死等。
+      try {
+        const routes = readJson<{ routes?: Record<string, { chatType?: string; sessionKey?: string; chatId?: string; updatedAt?: number }> }>(BRIDGE_PATH, { routes: {} }).routes || {};
+        const recentP2p = Object.values(routes)
+          .filter((r) => r.chatType === "p2p")
+          .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))[0];
+        if (recentP2p && recentP2p.chatId) {
+          writeFileSync(UPGRADE_NOTICE_PATH, `${JSON.stringify({ from: current, to: target, chatId: recentP2p.chatId, sessionKey: recentP2p.sessionKey, at: new Date().toISOString() }, null, 2)}\n`, "utf8");
+        }
+      } catch {}
       // daemon 内：文件已换。先返回（飞书回执发出），稍后主动释放
       // gateway lock / 停 WS 再退出，由 supervisor 自动拉起新版 daemon。
       // 不靠 setTimeout 硬退 —— 硬退若被阻塞会导致新旧 daemon 并存。

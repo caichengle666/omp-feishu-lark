@@ -19,6 +19,7 @@ export const SUPERVISOR_PID_PATH = join(ROOT_DIR, "supervisor.pid");
 export const SUPERVISOR_STOP_PATH = join(ROOT_DIR, "supervisor.stop");
 export const DEDUPE_PATH = join(ROOT_DIR, "dedupe.json");
 export const BRIDGE_PATH = join(ROOT_DIR, "bridge.json");
+export const UPGRADE_NOTICE_PATH = join(ROOT_DIR, "upgrade-notice.json");
 export const CHILD_SESSION_ENV = "PI_FEISHU_CHILD_SESSION";
 
 export const DEFAULT_CONFIG: Pick<
@@ -126,6 +127,7 @@ export function validateConfig(value: unknown): FeishuConfig | undefined {
   if (typeof raw.appSecret !== "string" || !raw.appSecret.trim()) return undefined;
   const domain = raw.domain || DEFAULT_CONFIG.domain;
   const groupPolicy = raw.groupPolicy || DEFAULT_CONFIG.groupPolicy;
+  const cardActionMode = parseCardActionMode(raw.cardActionMode) || DEFAULT_CONFIG.cardActionMode;
   if (domain !== "feishu" && domain !== "lark") return undefined;
   if (groupPolicy !== "open" && groupPolicy !== "mention") return undefined;
   const language = raw.language || DEFAULT_CONFIG.language;
@@ -135,6 +137,7 @@ export function validateConfig(value: unknown): FeishuConfig | undefined {
   const notificationPort = raw.notificationWebhookPort ?? DEFAULT_CONFIG.notificationWebhookPort;
   if (typeof notificationPort !== "number" || !Number.isInteger(notificationPort) || notificationPort < 1 || notificationPort > 65535) return undefined;
   if (raw.notificationWebhookEnabled && (typeof raw.notificationWebhookToken !== "string" || !raw.notificationWebhookToken.trim())) return undefined;
+  if (cardActionMode === "webhook" && (typeof raw.cardActionToken !== "string" || !raw.cardActionToken.trim())) return undefined;
   const promptNotifySec = numberOr(raw.promptNotifySec, DEFAULT_CONFIG.promptNotifySec);
   const promptTimeoutSec = numberOr(raw.promptTimeoutSec, DEFAULT_CONFIG.promptTimeoutSec);
   if (promptNotifySec < 0 || promptTimeoutSec < 0) return undefined;
@@ -143,7 +146,7 @@ export function validateConfig(value: unknown): FeishuConfig | undefined {
     appSecret: raw.appSecret.trim(),
     domain,
     groupPolicy,
-    cardActionMode: parseCardActionMode(raw.cardActionMode) || DEFAULT_CONFIG.cardActionMode,
+    cardActionMode,
     cardActionToken: typeof raw.cardActionToken === "string" && raw.cardActionToken.trim() ? raw.cardActionToken.trim() : undefined,
     cardActionWebhookHost: typeof raw.cardActionWebhookHost === "string" && raw.cardActionWebhookHost.trim() ? raw.cardActionWebhookHost.trim() : DEFAULT_CONFIG.cardActionWebhookHost,
     cardActionWebhookPort: port,

@@ -1,6 +1,42 @@
 import assert from "node:assert/strict";
+import { createServer } from "node:http";
 import test from "node:test";
-import { FeishuTransport } from "../extension/transport.ts";
+import { defaultHttpInstance } from "@larksuiteoapi/node-sdk";
+import { configureSdkRestTimeout, createWsReadyGate, FeishuTransport } from "../extension/transport.ts";
+
+test("configures a finite timeout for every SDK REST request", () => {
+  const client = { httpInstance: { defaults: { timeout: 0 } } };
+  configureSdkRestTimeout(client, 15_000);
+  assert.equal(client.httpInstance.defaults.timeout, 15_000);
+});
+
+test("SDK REST timeout aborts a real stalled HTTP request", async () => {
+  const server = createServer((_request, response) => {
+    setTimeout(() => response.end("late"), 500);
+  });
+  await new Promise((resolve, reject) => server.once("error", reject).listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  const previous = defaultHttpInstance.defaults.timeout;
+  try {
+    configureSdkRestTimeout({ httpInstance: defaultHttpInstance }, 50);
+    await assert.rejects(defaultHttpInstance.get(`http://127.0.0.1:${address.port}/stall`), /timeout/i);
+  } finally {
+    defaultHttpInstance.defaults.timeout = previous;
+    server.closeAllConnections?.();
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("WebSocket readiness waits for onReady and rejects on connection failure", async () => {
+  const ready = createWsReadyGate(1_000);
+  ready.resolve();
+  await ready.promise;
+
+  const failed = createWsReadyGate(1_000);
+  failed.reject(new Error("connect failed"));
+  await assert.rejects(failed.promise, /connect failed/);
+});
 
 test("replays a Feishu message event through the transport callback", async () => {
   let received;
