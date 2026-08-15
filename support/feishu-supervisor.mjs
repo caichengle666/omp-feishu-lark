@@ -1,5 +1,5 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { spawn, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { dirname } from "node:path";
 
 export function restartDelay(failures) {
@@ -232,10 +232,33 @@ export async function runSupervisor(argv = process.argv.slice(2)) {
     await stopChild(child, log, signal);
   };
 
-  process.on("SIGINT", () => { void stop("SIGINT"); });
-  process.on("SIGTERM", () => { void stop("SIGTERM"); });
+  const traceStopSource = (signal) => {
+    try {
+      const ppid = process.ppid;
+      let parent = "(unknown)";
+      try { parent = execFileSync("ps", ["-o", "comm=", "-p", String(ppid)], { encoding: "utf8" }).trim(); } catch {}
+      let stopFile = "";
+      try { stopFile = readFileSync(stopPath, "utf8").trim(); } catch {}
+      log(`stop requested via ${signal}; ppid=${ppid} (${parent})${stopFile ? ` stopFile=${stopFile}` : ""}`);
+      // Snapshot every process that could be involved so the next stop is
+      // attributable even without auditd: list our own pid file record, all
+      // feishu-supervisor/omp --mode rpc processes and their start times.
+      try {
+        const psOut = execFileSync("ps", ["-eo", "pid,ppid,etime,args"], { encoding: "utf8", maxBuffer: 1024 * 1024 });
+        const relevant = psOut.split("\n").filter((line) => /feishu-supervisor|omp --mode rpc/.test(line));
+        log(`process snapshot at stop:\n${relevant.join("\n")}`);
+      } catch {}
+    } catch (error) {
+      log(`stop requested via ${signal}; trace failed: ${error instanceof Error ? error.message : error}`);
+    }
+  };
+  process.on("SIGINT", () => { traceStopSource("SIGINT"); void stop("SIGINT"); });
+  process.on("SIGTERM", () => { traceStopSource("SIGTERM"); void stop("SIGTERM"); });
   const stopPoll = setInterval(() => {
-    if (shouldStopRequested(stopPath, supervisorRecord)) void stop("SIGTERM");
+    if (shouldStopRequested(stopPath, supervisorRecord)) {
+      traceStopSource("stopfile");
+      void stop("SIGTERM");
+    }
   }, 200);
 
   try {
