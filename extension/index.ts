@@ -461,9 +461,11 @@ async function upgradeDaemon(targetVersion: string): Promise<string> {
       return `目标版本 ${target} 低于当前版本 ${current}，拒绝降级。`;
     }
     const spec = daemonSpec();
+    // 从自身入口自动定位真实安装目录，不依赖 cwd、环境变量或人工传参。
+    const pluginDir = dirname(dirname(spec.extensionPath));
     // --no-restart：安装器只替换文件，不重启 daemon（避免 90s 超时与残留进程）。
     // 装完校验 exit 0 后再由本进程触发重启（TUI: restartDaemon；daemon 内: 退出交给 supervisor 拉起）。
-    const args = ["x", `@caichengle/omp-feishu-lark@${target}`, "--no-restart"];
+    const args = ["x", `@caichengle/omp-feishu-lark@${target}`, pluginDir, "--no-restart"];
     const result = await runProcess(spec.bunBin, args, {
       timeout: 180_000,
       cwd: process.cwd(),

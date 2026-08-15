@@ -88,6 +88,8 @@ test("upgrade prepares the new version before stopping the running daemon/superv
 test("upgrade pins the package version and runs the installer asynchronously", () => {
   const source = readFileSync(extensionPath, "utf8");
   assert.match(source, /`@caichengle\/omp-feishu-lark@\$\{target\}`/);
+  assert.match(source, /const pluginDir = dirname\(dirname\(spec\.extensionPath\)\);/);
+  assert.match(source, /const args = \["x", `@caichengle\/omp-feishu-lark@\$\{target\}`, pluginDir, "--no-restart"\];/);
   assert.match(source, /await runProcess\(spec\.bunBin, args/);
   assert.doesNotMatch(source, /spawnSync\(spec\.bunBin, args/);
 });
