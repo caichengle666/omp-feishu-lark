@@ -1,0 +1,27 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { validateConfig } from "../extension/config.ts";
+
+const base = {
+  appId: "cli_test",
+  appSecret: "secret",
+  domain: "feishu",
+  groupPolicy: "open",
+};
+
+test("notification webhook remains disabled by default", () => {
+  const config = validateConfig(base);
+  assert.equal(config?.notificationWebhookEnabled, false);
+  assert.equal(config?.notificationWebhookHost, "127.0.0.1");
+  assert.equal(config?.notificationWebhookPort, 3002);
+  assert.equal(config?.notificationWebhookPath, "/webhook/notify");
+  assert.equal(config?.promptTimeoutEnabled, false);
+});
+
+test("enabled notification webhook requires a token and validates its port", () => {
+  assert.equal(validateConfig({ ...base, notificationWebhookEnabled: true }), undefined);
+  assert.equal(validateConfig({ ...base, notificationWebhookEnabled: true, notificationWebhookToken: "token", notificationWebhookPort: 70000 }), undefined);
+  const config = validateConfig({ ...base, notificationWebhookEnabled: true, notificationWebhookToken: "token", notificationWebhookPath: "ci" });
+  assert.equal(config?.notificationWebhookPath, "/ci");
+  assert.equal(config?.notificationWebhookToken, "token");
+});

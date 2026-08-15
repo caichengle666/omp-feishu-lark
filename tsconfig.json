@@ -1,0 +1,12 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": false,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "types": ["node", "bun"]
+  },
+  "include": ["extension/**/*.ts", "src/**/*.ts"]
+}
