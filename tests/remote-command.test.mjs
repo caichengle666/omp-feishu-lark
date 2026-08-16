@@ -20,18 +20,36 @@ test("bot parser recognizes status, debug, and refresh commands", () => {
   assert.deepEqual(parseBotCommand("/feishu config"), { name: "config" });
 });
 
-test("Feishu status is available without administrator permission", async () => {
+test("Feishu status passes administrator detail permission to the reporter", async () => {
   const replies = [];
+  const detailFlags = [];
   const transport = { replyText: async (_messageId, text) => { replies.push(text); } };
   const handler = new FeishuMessageHandler({}, () => transport, undefined, {
     doctor: () => "",
     version: () => "",
-    status: () => "status report",
+    status: (detailed) => { detailFlags.push(detailed); return "status report"; },
     isAdmin: () => false,
   });
 
   assert.equal(await handler.handleCommand(message, "p2p:ou_user", "/feishu status"), true);
   assert.deepEqual(replies, ["status report"]);
+  assert.deepEqual(detailFlags, [false]);
+});
+
+test("Feishu doctor and version request sanitized reports for non-administrators", async () => {
+  const replies = [];
+  const detailFlags = [];
+  const transport = { replyText: async (_messageId, text) => { replies.push(text); } };
+  const handler = new FeishuMessageHandler({}, () => transport, undefined, {
+    doctor: (detailed) => { detailFlags.push(["doctor", detailed]); return "doctor report"; },
+    version: (detailed) => { detailFlags.push(["version", detailed]); return "version report"; },
+    isAdmin: () => false,
+  });
+
+  assert.equal(await handler.handleCommand(message, "p2p:ou_user", "/doctor"), true);
+  assert.equal(await handler.handleCommand(message, "p2p:ou_user", "/version"), true);
+  assert.deepEqual(detailFlags, [["doctor", false], ["version", false]]);
+  assert.deepEqual(replies, ["doctor report", "version report"]);
 });
 
 test("Feishu debug and refresh are denied for non-administrators", async () => {
@@ -89,21 +107,23 @@ test("Feishu debug and refresh run for an administrator", async () => {
   assert.deepEqual(replies, ["debug report", "refresh report"]);
 });
 
-test("group workspace changes require an administrator", async () => {
+test("workspace changes require an administrator in p2p and group chats", async () => {
   const replies = [];
   let switched = false;
   const transport = { replyText: async (_messageId, text) => { replies.push(text); } };
-  const groupMessage = { ...message, chatType: "group" };
   const handler = new FeishuMessageHandler({
     switchWorkspace: async () => { switched = true; },
   }, () => transport, undefined, {
     isAdmin: () => false,
   });
 
-  assert.equal(await handler.handleCommand(groupMessage, "group:oc_chat", "/workspace /tmp/project"), true);
+  assert.equal(await handler.handleCommand(message, "p2p:ou_user", "/workspace /tmp/project"), true);
   assert.equal(switched, false);
-  assert.match(replies[0], /群聊切换工作区需要管理员权限/);
+  assert.match(replies[0], /切换工作区需要管理员权限/);
   assert.match(replies[0], /ou_user/);
+  const groupMessage = { ...message, chatType: "group" };
+  assert.equal(await handler.handleCommand(groupMessage, "group:oc_chat", "/workspace /tmp/project"), true);
+  assert.match(replies[1], /切换工作区需要管理员权限/);
 });
 
 test("group resume requires an administrator", async () => {

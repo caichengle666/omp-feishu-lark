@@ -22,11 +22,11 @@ export class FeishuMessageHandler {
     private readonly getTransport: () => FeishuTransport | undefined,
     private readonly bridgeStore?: FeishuBridgeStore,
     private readonly diagnostics?: {
-      doctor: () => string | Promise<string>;
-      version: () => string;
+      doctor: (detailed?: boolean) => string | Promise<string>;
+      version: (detailed?: boolean) => string;
       upgrade?: (version?: string, target?: { chatId: string; messageId: string; sessionKey: string; chatType: string }) => Promise<string>;
       isAdmin?: (openId: string) => boolean;
-      status?: () => string | Promise<string>;
+      status?: (detailed?: boolean) => string | Promise<string>;
       debug?: () => string | Promise<string>;
       refresh?: () => string | Promise<string>;
       config?: () => string | Promise<string>;
@@ -196,7 +196,7 @@ export class FeishuMessageHandler {
     }
 
     if (command.name === "status") {
-      const text = await this.diagnostics?.status?.();
+      const text = await this.diagnostics?.status?.(this.diagnostics?.isAdmin?.(msg.senderOpenId) === true);
       await transport.replyText(msg.messageId, text || "状态功能尚未准备好，请在 OMP 中运行 /feishu status。");
       return true;
     }
@@ -227,9 +227,10 @@ export class FeishuMessageHandler {
     }
 
     if (command.name === "doctor" || command.name === "version") {
+      const detailed = this.diagnostics?.isAdmin?.(msg.senderOpenId) === true;
       const text = command.name === "doctor"
-        ? await this.diagnostics?.doctor()
-        : this.diagnostics?.version();
+        ? await this.diagnostics?.doctor(detailed)
+        : this.diagnostics?.version(detailed);
       await transport.replyText(msg.messageId, text || "诊断功能尚未准备好，请在 OMP 中运行 /feishu doctor 或 /feishu version。");
       return true;
     }
@@ -252,10 +253,10 @@ export class FeishuMessageHandler {
     }
 
     if (command.name === "send") {
-      if (msg.chatType === "group" && !this.diagnostics?.isAdmin?.(msg.senderOpenId)) {
+      if (!this.diagnostics?.isAdmin?.(msg.senderOpenId)) {
         await transport.replyText(
           msg.messageId,
-          `群聊发送文件需要管理员权限。请将你的 Open ID 加入 adminOpenIds：${msg.senderOpenId}`,
+          `发送文件需要管理员权限。请将你的 Open ID 加入 adminOpenIds：${msg.senderOpenId}`,
         );
         return true;
       }
@@ -270,10 +271,10 @@ export class FeishuMessageHandler {
     }
 
     if (command.name === "workspace") {
-      if (msg.chatType === "group" && !this.diagnostics?.isAdmin?.(msg.senderOpenId)) {
+      if (!this.diagnostics?.isAdmin?.(msg.senderOpenId)) {
         await transport.replyText(
           msg.messageId,
-          `群聊切换工作区需要管理员权限。请将你的 Open ID 加入 adminOpenIds：${msg.senderOpenId}`,
+          `切换工作区需要管理员权限。请将你的 Open ID 加入 adminOpenIds：${msg.senderOpenId}`,
         );
         return true;
       }

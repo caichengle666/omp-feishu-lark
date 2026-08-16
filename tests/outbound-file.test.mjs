@@ -44,7 +44,7 @@ test("workspace file resolver permits files inside the workspace and rejects out
   }
 });
 
-test("Feishu p2p /send sends a workspace file through the transport", async () => {
+test("Feishu administrator can send a workspace file through the transport", async () => {
   const root = tempWorkspace();
   try {
     const local = join(root, "project", "report.pdf");
@@ -57,7 +57,7 @@ test("Feishu p2p /send sends a workspace file through the transport", async () =
     };
     const handler = new FeishuMessageHandler({
       resolveWorkspaceFile: () => local,
-    }, () => transport, undefined, {});
+    }, () => transport, undefined, { isAdmin: () => true });
     assert.equal(await handler.handleCommand(message, "p2p:ou_user", "/send report.pdf"), true);
     assert.deepEqual(sent, [local]);
     assert.match(replies[0], /report\.pdf 已发送/);
@@ -66,7 +66,7 @@ test("Feishu p2p /send sends a workspace file through the transport", async () =
   }
 });
 
-test("group /send is denied for non-administrators", async () => {
+test("p2p and group /send are denied for non-administrators", async () => {
   const replies = [];
   let sent = false;
   const transport = {
@@ -78,11 +78,12 @@ test("group /send is denied for non-administrators", async () => {
   }, () => transport, undefined, {
     isAdmin: () => false,
   });
-  const groupMessage = { ...message, chatType: "group" };
-
-  assert.equal(await handler.handleCommand(groupMessage, "group:oc_chat", "/send report.pdf"), true);
+  assert.equal(await handler.handleCommand(message, "p2p:ou_user", "/send report.pdf"), true);
   assert.equal(sent, false);
-  assert.match(replies[0], /群聊发送文件需要管理员权限/);
+  assert.match(replies[0], /发送文件需要管理员权限/);
+  const groupMessage = { ...message, chatType: "group" };
+  assert.equal(await handler.handleCommand(groupMessage, "group:oc_chat", "/send report.pdf"), true);
+  assert.match(replies[1], /发送文件需要管理员权限/);
 });
 
 test("transport uploads a local PDF as a Feishu file", async () => {

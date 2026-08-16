@@ -1,10 +1,12 @@
-import { lstatSync, realpathSync, statSync } from "node:fs";
+import { realpathSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { extname, isAbsolute, relative, resolve, sep } from "node:path";
 
 const GENERATED_IMAGE_TOOLS = new Set(["generate_image", "image_generation", "image_gen", "imagegen"]);
 const GENERATED_FILE_TOOLS = new Set(["write", "apply_patch", "edit", "patch", "tts", "speech"]);
 const PATH_PATH_ARG_KEYS = ["path", "filePath", "file_path"];
+
+export type ArtifactCandidate = { path: string; allowOutsideWorkspace: boolean };
 
 const SENDABLE_EXTENSIONS = new Set([
   ".png",
@@ -44,48 +46,46 @@ const SENDABLE_EXTENSIONS = new Set([
  * OS temp dir because the tool writes generated images there; workspace writes
  * and TTS remain restricted to the current chat workspace.
  */
-export function collectArtifactCandidates(event: unknown, workspaceRoot?: string): string[] {
+export function collectArtifactCandidates(event: unknown, workspaceRoot?: string): ArtifactCandidate[] {
   const candidates = collectCandidatePaths(event, workspaceRoot);
   const seen = new Set<string>();
-  const result: string[] = [];
+  const result: ArtifactCandidate[] = [];
   for (const candidate of candidates) {
-    if (!isSendableExtension(candidate) || seen.has(candidate)) continue;
-    seen.add(candidate);
+    if (!isSendableExtension(candidate.path) || seen.has(candidate.path)) continue;
+    seen.add(candidate.path);
     result.push(candidate);
   }
   return result;
 }
 
 export function collectSendableArtifacts(event: unknown, workspaceRoot?: string): string[] {
-  return collectArtifactCandidates(event, workspaceRoot).filter((path) => isExistingSendableArtifact(path, workspaceRoot));
+  return collectArtifactCandidates(event, workspaceRoot)
+    .filter((candidate) => isExistingSendableArtifact(candidate.path, workspaceRoot, candidate.allowOutsideWorkspace))
+    .map((candidate) => candidate.path);
 }
 
-export function isExistingSendableArtifact(filePath: string, workspaceRoot?: string): boolean {
+export function isExistingSendableArtifact(filePath: string, workspaceRoot?: string, allowOutsideWorkspace = false): boolean {
   try {
-    if (lstatSync(filePath).isSymbolicLink()) return false;
-    const stat = statSync(filePath);
+    const realFile = realpathSync(filePath);
+    const stat = statSync(realFile);
     if (!stat.isFile() || stat.size <= 0) return false;
-    const resolvedFile = realpathSync(filePath);
-    if (workspaceRoot) {
-      const resolvedWorkspace = realpathSync(workspaceRoot);
-      const requestedFile = resolve(filePath);
-      const requestedInsideWorkspace = isPathInside(resolve(workspaceRoot), requestedFile);
-      if (requestedInsideWorkspace && !isPathInside(resolvedWorkspace, resolvedFile)) return false;
-      if (!requestedInsideWorkspace && !isPathInside(realpathSync(tmpdir()), resolvedFile)) return false;
-    }
-    return true;
+    if (!workspaceRoot) return true;
+    const realWorkspace = realpathSync(workspaceRoot);
+    if (isPathInside(realWorkspace, realFile)) return true;
+    if (!allowOutsideWorkspace) return false;
+    return isPathInside(realpathSync(tmpdir()), realFile);
   } catch {
     return false;
   }
 }
 
-function collectCandidatePaths(event: unknown, workspaceRoot?: string): string[] {
+function collectCandidatePaths(event: unknown, workspaceRoot?: string): ArtifactCandidate[] {
   if (!event || typeof event !== "object") return [];
   const raw = event as any;
   const toolName = typeof raw.toolName === "string" ? raw.toolName : "";
-  const candidates: string[] = [];
+  const candidates: ArtifactCandidate[] = [];
 
-  if (raw.type === "tool_execution_start" && GENERATED_FILE_TOOLS.has(toolName)) {
+  if (raw.type === "tool_execution_start" && (toolName === "tts" || toolName === "speech")) {
     const args = raw.args && typeof raw.args === "object" ? raw.args : {};
     for (const key of PATH_PATH_ARG_KEYS) {
       pushPath(candidates, args[key], workspaceRoot, false);
@@ -119,13 +119,14 @@ function collectCandidatePaths(event: unknown, workspaceRoot?: string): string[]
   return candidates;
 }
 
-function pushPath(candidates: string[], value: unknown, workspaceRoot: string | undefined, allowOutside: boolean) {
+function pushPath(candidates: ArtifactCandidate[], value: unknown, workspaceRoot: string | undefined, allowOutside: boolean) {
   if (typeof value !== "string" || !value.trim()) return;
   const root = workspaceRoot ? resolve(workspaceRoot) : undefined;
   const candidate = isAbsolute(value) ? resolve(value) : root ? resolve(root, value) : undefined;
   if (!candidate) return;
   if (!allowOutside && !isPathInside(root, candidate)) return;
-  candidates.push(candidate);
+  if (allowOutside && !isPathInside(resolve(tmpdir()), candidate)) return;
+  candidates.push({ path: candidate, allowOutsideWorkspace: allowOutside });
 }
 
 
