@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, isAbsolute, join, resolve } from "node:path";
+import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { AgentSession, SessionInfo } from "@oh-my-pi/pi-coding-agent";
 import {
   createAgentSession,
@@ -297,6 +297,10 @@ export class ConversationManager {
 
   getWorkspace(key: string) {
     return this.state.workspaces?.[key] || this.cwd;
+  }
+
+  resolveWorkspaceFile(key: string, input: string | undefined) {
+    return resolveWorkspaceFilePath(this.getWorkspace(key), input);
   }
 
   async switchWorkspace(key: string, workspaceInput: string | undefined, onReply: (text: string) => Promise<void>) {
@@ -681,6 +685,25 @@ function resolveWorkspacePath(input: string) {
   const resolved = resolve(expanded);
   ensureWorkspaceExists(resolved);
   return realpathSync(resolved);
+}
+
+export function resolveWorkspaceFilePath(workspace: string, input: string | undefined) {
+  const trimmed = input?.trim();
+  if (!trimmed) throw new Error("用法：/send 文件路径，例如：/send report.pdf");
+
+  const root = realpathSync(workspace);
+  const candidate = isAbsolute(trimmed) ? resolve(trimmed) : resolve(root, trimmed);
+  if (!existsSync(candidate)) throw new Error(`文件不存在：${candidate}`);
+
+  const file = realpathSync(candidate);
+  const pathFromRoot = relative(root, file);
+  if (pathFromRoot === "" || pathFromRoot === ".." || pathFromRoot.startsWith(`..${sep}`) || isAbsolute(pathFromRoot)) {
+    throw new Error("只能发送当前工作区内的文件。");
+  }
+
+  const stat = statSync(file);
+  if (!stat.isFile()) throw new Error("只能发送普通文件，不能发送目录。");
+  return file;
 }
 
 function ensureWorkspaceExists(path: string) {

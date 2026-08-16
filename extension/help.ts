@@ -14,6 +14,7 @@ export function feishuHelpText() {
     "/feishu version 或 /version - 查看插件、OMP 和 Bun 版本",
     "/feishu upgrade - 升级插件到最新版（可指定版本：/feishu upgrade 0.4.14）",
     "/feishu status - 查看连接状态和运行位置",
+    "/feishu config - 查看脱敏配置（管理员）",
     "/feishu debug - 查看最近的调试日志（管理员）",
     "/feishu refresh - 刷新 OMP 模型列表（管理员）",
     "/new - 新建当前飞书会话",
@@ -21,5 +22,6 @@ export function feishuHelpText() {
     "/model - 选择当前聊天使用的模型",
     "/stop - 停止当前聊天正在执行的任务",
     "/workspace PATH - 切换当前聊天的工作目录（群聊需管理员）",
+    "/send PATH - 发送当前工作区内的文件或图片（群聊需管理员）",
   ].join("\n");
 }

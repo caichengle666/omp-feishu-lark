@@ -1,5 +1,8 @@
+import { readFileSync, statSync } from "node:fs";
+import { basename, extname } from "node:path";
 import type { FeishuCardAction, FeishuConfig, FeishuMessage } from "./types.js";
 import type { Client, WSClient } from "@larksuiteoapi/node-sdk";
+import { detectImageMime } from "./attachments.js";
 import { debugLog } from "./debug.js";
 import { buildMarkdownCardParts, buildPostMessages, chooseMessageMode } from "./rich-text.js";
 import { FeishuCardActionWebhook } from "./card-action-webhook.js";
@@ -7,6 +10,8 @@ import { FeishuCardActionWebhook } from "./card-action-webhook.js";
 const TEXT_CHUNK_MAX_BYTES = 120 * 1024;
 const REST_TIMEOUT_MS = 15_000;
 const WS_READY_TIMEOUT_MS = 30_000;
+const MAX_IMAGE_UPLOAD_BYTES = 10 * 1024 * 1024;
+const MAX_FILE_UPLOAD_BYTES = 30 * 1024 * 1024;
 type RuntimeWSClient = WSClient & {
   close?: (options?: { force?: boolean }) => void;
   stop?: () => Promise<void> | void;
@@ -430,6 +435,45 @@ export class FeishuTransport {
     });
   }
 
+  async replyLocalFile(messageId: string, filePath: string) {
+    const client = this.sdkClient;
+    if (!client) throw new Error("Feishu transport is not running");
+
+    const stat = statSync(filePath);
+    if (!stat.isFile()) throw new Error("Only regular files can be sent");
+    if (stat.size <= 0) throw new Error("Cannot send an empty file");
+    if (stat.size > MAX_FILE_UPLOAD_BYTES) throw new Error("文件超过飞书机器人单文件 30 MB 上传限制。");
+
+    const fileName = basename(filePath);
+    const bytes = readFileSync(filePath);
+    const imageMime = detectImageMime(bytes);
+    if (imageMime && bytes.length <= MAX_IMAGE_UPLOAD_BYTES) {
+      const uploaded = await client.im.v1.image.create({
+        data: { image_type: "message", image: bytes },
+      });
+      const imageKey = (uploaded as any)?.image_key || (uploaded as any)?.data?.image_key;
+      if (!imageKey) throw new Error("Feishu image upload did not return image_key");
+      await client.im.message.reply({
+        path: { message_id: messageId },
+        data: { msg_type: "image", content: JSON.stringify({ image_key: imageKey }) },
+      });
+      debugLog("feishu.reply.local_image", { messageId, fileName, bytes: bytes.length });
+      return { kind: "image" as const, fileName };
+    }
+
+    const uploaded = await client.im.v1.file.create({
+      data: { file_type: feishuFileType(fileName), file_name: fileName, file: bytes },
+    });
+    const fileKey = (uploaded as any)?.file_key || (uploaded as any)?.data?.file_key;
+    if (!fileKey) throw new Error("Feishu file upload did not return file_key");
+    await client.im.message.reply({
+      path: { message_id: messageId },
+      data: { msg_type: "file", content: JSON.stringify({ file_key: fileKey }) },
+    });
+    debugLog("feishu.reply.local_file", { messageId, fileName, bytes: bytes.length });
+    return { kind: "file" as const, fileName };
+  }
+
   async downloadMessageResource(messageId: string, fileKey: string, type: "image" | "file"): Promise<{ bytes: Buffer; mimeType?: string }> {
     debugLog("feishu.download.resource.start", { messageId, fileKey, type });
     const result = await this.sdkClient.im.v1.messageResource.get({
@@ -469,6 +513,15 @@ export class FeishuTransport {
 export function configureSdkRestTimeout(client: Client, timeoutMs = REST_TIMEOUT_MS) {
   const http = (client as RuntimeSdkClient).httpInstance;
   if (http?.defaults) http.defaults.timeout = timeoutMs;
+}
+
+function feishuFileType(fileName: string) {
+  const ext = extname(fileName).toLowerCase();
+  if (ext === ".pdf") return "pdf";
+  if (ext === ".doc" || ext === ".docx") return "doc";
+  if (ext === ".xls" || ext === ".xlsx" || ext === ".csv") return "xls";
+  if (ext === ".ppt" || ext === ".pptx") return "ppt";
+  return "stream";
 }
 
 export function createWsReadyGate(timeoutMs: number) {

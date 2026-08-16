@@ -29,6 +29,7 @@ export class FeishuMessageHandler {
       status?: () => string | Promise<string>;
       debug?: () => string | Promise<string>;
       refresh?: () => string | Promise<string>;
+      config?: () => string | Promise<string>;
     },
   ) {}
 
@@ -201,6 +202,19 @@ export class FeishuMessageHandler {
       return true;
     }
 
+    if (command.name === "config") {
+      if (!this.diagnostics?.isAdmin?.(msg.senderOpenId)) {
+        await transport.replyText(
+          msg.messageId,
+          `无权查看远程配置。请将你的 Open ID 加入 adminOpenIds：${msg.senderOpenId}`,
+        );
+        return true;
+      }
+      const text = await this.diagnostics?.config?.();
+      await transport.replyText(msg.messageId, text || "配置报告尚未准备好，请在 OMP 中运行 /feishu config。");
+      return true;
+    }
+
     if (command.name === "doctor" || command.name === "version") {
       const text = command.name === "doctor"
         ? await this.diagnostics?.doctor()
@@ -223,6 +237,24 @@ export class FeishuMessageHandler {
         chatType: msg.chatType,
       });
       if (report) await transport.replyText(msg.messageId, report);
+      return true;
+    }
+
+    if (command.name === "send") {
+      if (msg.chatType === "group" && !this.diagnostics?.isAdmin?.(msg.senderOpenId)) {
+        await transport.replyText(
+          msg.messageId,
+          `群聊发送文件需要管理员权限。请将你的 Open ID 加入 adminOpenIds：${msg.senderOpenId}`,
+        );
+        return true;
+      }
+      try {
+        const filePath = this.conversations.resolveWorkspaceFile(key, command.path);
+        const sent = await transport.replyLocalFile(msg.messageId, filePath);
+        await transport.replyText(msg.messageId, sent?.fileName ? `${sent.fileName} 已发送。` : "文件已发送。");
+      } catch (error) {
+        await transport.replyText(msg.messageId, `无法发送文件：${error instanceof Error ? error.message : String(error)}\n用法：/send 文件路径`);
+      }
       return true;
     }
 

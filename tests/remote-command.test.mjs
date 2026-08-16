@@ -17,6 +17,7 @@ test("bot parser recognizes status, debug, and refresh commands", () => {
   assert.deepEqual(parseBotCommand("/status"), { name: "status" });
   assert.deepEqual(parseBotCommand("/feishu debug"), { name: "debug" });
   assert.deepEqual(parseBotCommand("/feishu refresh"), { name: "refresh" });
+  assert.deepEqual(parseBotCommand("/feishu config"), { name: "config" });
 });
 
 test("Feishu status is available without administrator permission", async () => {
@@ -51,6 +52,23 @@ test("Feishu debug and refresh are denied for non-administrators", async () => {
   assert.match(replies[0], /ou_user/);
   assert.match(replies[1], /无权执行远程 refresh/);
   assert.match(replies[1], /ou_user/);
+});
+
+test("Feishu config is denied for non-administrators and shown for administrators", async () => {
+  const replies = [];
+  const transport = { replyText: async (_messageId, text) => { replies.push(text); } };
+  const denied = new FeishuMessageHandler({}, () => transport, undefined, { isAdmin: () => false });
+  assert.equal(await denied.handleCommand(message, "p2p:ou_user", "/feishu config"), true);
+  assert.match(replies[0], /无权查看远程配置/);
+
+  const allowedReplies = [];
+  const allowedTransport = { replyText: async (_messageId, text) => { allowedReplies.push(text); } };
+  const allowed = new FeishuMessageHandler({}, () => allowedTransport, undefined, {
+    isAdmin: () => true,
+    config: () => "config report",
+  });
+  assert.equal(await allowed.handleCommand(message, "p2p:ou_user", "/feishu config"), true);
+  assert.deepEqual(allowedReplies, ["config report"]);
 });
 
 test("Feishu debug and refresh run for an administrator", async () => {

@@ -7,6 +7,8 @@ test("bot parser recognizes /feishu setup as a plugin command", () => {
   assert.deepEqual(parseBotCommand("/feishu setup"), { name: "setup" });
   assert.deepEqual(parseBotCommand("/FEISHU SETUP"), { name: "setup" });
   assert.deepEqual(parseBotCommand("/feishu setup 0.4.30"), undefined);
+  assert.deepEqual(parseBotCommand("/send report.png"), { name: "send", path: "report.png" });
+  assert.deepEqual(parseBotCommand("/feishu config"), { name: "config" });
 });
 
 test("Feishu setup replies with OMP guidance instead of sending the text to the model", async () => {

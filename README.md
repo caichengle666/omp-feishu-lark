@@ -172,6 +172,11 @@ used to suppress repeat delivery. The same settings can be supplied through
 Run `/feishu help` in OMP, or send `/feishu help` or `/help` to the bot, for a
 Chinese description of every plugin and chat command.
 
+In Feishu, send `/send PATH` to upload a file from the current chat workspace.
+Supported images are sent as image messages; other files are uploaded through the
+bot file API. Group chats require an administrator. Administrators can inspect
+masked settings with `/feishu config` in OMP or Feishu.
+
 Remote administrative commands such as `/feishu upgrade` are denied by
 default. Add the administrator's Feishu Open ID to `adminOpenIds` in
 `config.json`, or set a comma-separated `FEISHU_ADMIN_OPEN_IDS` environment

@@ -13,6 +13,8 @@ export type BotCommand =
   | { name: "status" }
   | { name: "debug" }
   | { name: "refresh" }
+  | { name: "config" }
+  | { name: "send"; path?: string }
   | { name: "workspace"; path?: string };
 
 type PostBody = {
@@ -110,6 +112,9 @@ export function parseBotCommand(text: string): BotCommand | undefined {
   if (lower === "/feishu status" || lower === "/status") return { name: "status" };
   if (lower === "/feishu debug" || lower === "/debug") return { name: "debug" };
   if (lower === "/feishu refresh" || lower === "/refresh") return { name: "refresh" };
+  if (lower === "/feishu config") return { name: "config" };
+  const sendMatch = trimmed.match(/^\/(?:feishu\s+)?send(?:\s+(.+))?$/is);
+  if (sendMatch) return { name: "send", path: sendMatch[1]?.trim() };
   const workspaceMatch = trimmed.match(/^\/workspace(?:\s+(.+))?$/si);
   if (workspaceMatch) {
     return { name: "workspace", path: workspaceMatch[1]?.trim() };

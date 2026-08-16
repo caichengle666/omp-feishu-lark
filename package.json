@@ -1,6 +1,7 @@
 {
   "name": "@caichengle/omp-feishu-lark",
   "version": "0.4.32",
+  "version": "0.4.33",
   "description": "Feishu/Lark bridge for OMP coding agent",
   "type": "module",
   "license": "MIT",

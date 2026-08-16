@@ -176,6 +176,7 @@ test("registers OMP argument completions for /feishu subcommands", () => {
   const source = readFileSync(extensionPath, "utf8");
   assert.match(source, /getArgumentCompletions: \(prefix\)/);
   assert.match(source, /help.*setup.*start.*stop.*restart.*refresh.*status.*doctor.*version.*debug.*autostart.*reset/s);
+  assert.match(source, /status.*config.*doctor/);
   assert.match(source, /const cmd = cmdRaw \|\| "status"/);
   assert.match(source, /ctx\.ui\.notify\(feishuHelpText\(\), "info"\)/);
 });
@@ -228,6 +229,8 @@ test("exposes the shared Chinese help command in OMP and Feishu", () => {
   assert.match(handlerSource, /command\.name === "help"/);
   assert.match(helpSource, /\/feishu setup - 配置飞书应用/);
   assert.match(helpSource, /\/workspace PATH - 切换当前聊天的工作目录/);
+  assert.match(helpSource, /\/feishu config - 查看脱敏配置/);
+  assert.match(helpSource, /\/send PATH - 发送当前工作区内的文件或图片/);
 });
 
 test("installs and manages the proactive notification webhook", () => {

@@ -69,6 +69,7 @@ export default function feishuExtension(pi: ExtensionAPI) {
     status: () => statusReport(),
     debug: () => debugReport(),
     refresh: () => refreshReport(),
+    config: () => configReport(),
   });
 
   const STATUS_KEY = "feishu-connection";
@@ -133,6 +134,23 @@ export default function feishuExtension(pi: ExtensionAPI) {
     if (!existsSync(DEBUG_LOG_PATH)) return "还没有飞书调试日志。请先在飞书里发一条消息给机器人。";
     const lines = readFileSync(DEBUG_LOG_PATH, "utf8").trim().split("\n").slice(-20);
     return lines.join("\n");
+  }
+
+  function configReport() {
+    const cfg = loadConfig();
+    if (!cfg) return "配置不存在。请运行 /feishu setup。";
+    return [
+      "Feishu config",
+      `Domain: ${cfg.domain}`,
+      `App ID: ${mask(cfg.appId)}`,
+      `App secret: ${cfg.appSecret ? "configured" : "missing"}`,
+      `Group policy: ${cfg.groupPolicy}`,
+      `Admins: ${(cfg.adminOpenIds || []).join(", ") || "none"}`,
+      `Auto start: ${cfg.autoStart !== false ? "on" : "off"}`,
+      `Prompt notice: ${cfg.promptNotifySec || 0}s`,
+      `Notification webhook: ${cfg.notificationWebhookEnabled ? "enabled" : "disabled"}`,
+      `Config path: ${CONFIG_PATH}`,
+    ].join("\n");
   }
 
   function refreshStatusFromState() {
@@ -649,9 +667,9 @@ async function upgradeDaemon(targetVersion: string, noticeTarget?: UpgradeNotice
   }
 
   pi.registerCommand("feishu", {
-    description: "Feishu/Lark: help, setup, start, stop, restart, refresh, status, doctor, version, debug, autostart, upgrade, reset",
+    description: "Feishu/Lark: help, setup, start, stop, restart, refresh, status, config, doctor, version, debug, autostart, upgrade, reset",
     getArgumentCompletions: (prefix) => {
-      const commands = ["help", "setup", "start", "stop", "restart", "refresh", "status", "doctor", "version", "debug", "autostart", "upgrade", "reset"];
+      const commands = ["help", "setup", "start", "stop", "restart", "refresh", "status", "config", "doctor", "version", "debug", "autostart", "upgrade", "reset"];
       const query = prefix.trim().toLowerCase();
       return commands
         .filter((command) => command.startsWith(query))
@@ -788,6 +806,10 @@ async function upgradeDaemon(targetVersion: string, noticeTarget?: UpgradeNotice
         }
         if (cmd === "status") {
           ctx.ui.notify(statusReport(), "info");
+          return;
+        }
+        if (cmd === "config") {
+          ctx.ui.notify(configReport(), "info");
           return;
         }
         if (cmd === "debug") {
