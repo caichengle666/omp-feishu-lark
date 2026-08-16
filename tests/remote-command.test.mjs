@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "bun:test";
-import { FeishuMessageHandler } from "../extension/message-handler.ts";
+import { buildUpgradeProgressCard, FeishuMessageHandler, formatUpgradeRemaining } from "../extension/message-handler.ts";
 import { parseBotCommand } from "../extension/messages.ts";
 
 const message = {
@@ -140,4 +140,33 @@ test("group resume requires an administrator", async () => {
   assert.equal(await handler.handleCommand(groupMessage, "group:oc_chat", "/resume"), true);
   assert.equal(listed, false);
   assert.match(replies[0], /群聊恢复历史会话需要管理员权限/);
+});
+
+test("remote upgrade displays a countdown card and updates its phase", async () => {
+  const cards = [];
+  const updates = [];
+  const replies = [];
+  const transport = {
+    replyCard: async (_messageId, card) => { cards.push(card); return "om_upgrade_progress"; },
+    updateCard: async (messageId, card) => { updates.push([messageId, card]); },
+    replyText: async (_messageId, text) => { replies.push(text); },
+  };
+  const handler = new FeishuMessageHandler({}, () => transport, undefined, {
+    isAdmin: () => true,
+    upgradeTimeoutSeconds: 90,
+    upgrade: async (_version, _target, onProgress) => {
+      onProgress?.("正在下载并安装 v0.4.37");
+      return "升级文件已就绪，正在重启服务…";
+    },
+  });
+
+  assert.equal(await handler.handleCommand(message, "p2p:ou_user", "/feishu upgrade"), true);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.match(JSON.stringify(cards[0]), /飞书插件升级中/);
+  assert.match(JSON.stringify(cards[0]), /预计剩余：1 分 30 秒/);
+  assert.ok(updates.some(([, card]) => JSON.stringify(card).includes("正在下载并安装 v0.4.37")));
+  assert.match(JSON.stringify(updates.at(-1)?.[1]), /正在重启飞书服务/);
+  assert.deepEqual(replies, ["升级文件已就绪，正在重启服务…"]);
+  assert.equal(formatUpgradeRemaining(61), "1 分 1 秒");
+  assert.match(JSON.stringify(buildUpgradeProgressCard({ phase: "测试", remainingSeconds: 0 })), /预计剩余：0 秒/);
 });

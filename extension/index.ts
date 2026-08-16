@@ -64,7 +64,8 @@ export default function feishuExtension(pi: ExtensionAPI) {
   const messageHandler = new FeishuMessageHandler(conversations, () => transport, bridgeStore, {
     doctor: (detailed = true) => doctorReport(detailed),
     version: (detailed = true) => versionReport(detailed),
-    upgrade: (version, target) => requestUpgrade(version || "", target),
+    upgrade: (version, target, onProgress) => requestUpgrade(version || "", target, onProgress),
+    upgradeTimeoutSeconds: Math.round(upgradeTimeoutMs(process.env.OMP_FEISHU_UPGRADE_TIMEOUT_SEC) / 1000),
     isAdmin: (openId: string) => isFeishuAdmin(loadConfig(), openId),
     status: (detailed = true) => statusReport(detailed),
     debug: () => debugReport(),
@@ -597,17 +598,17 @@ export default function feishuExtension(pi: ExtensionAPI) {
     return { status: "restarted" as const, stopped, started };
   }
 
-  async function requestUpgrade(targetVersion: string, noticeTarget?: UpgradeNoticeTarget): Promise<string> {
+  async function requestUpgrade(targetVersion: string, noticeTarget?: UpgradeNoticeTarget, onProgress?: (phase: string) => void): Promise<string> {
     if (upgradeInFlight) return "已有升级任务正在执行，请等待升级完成通知。";
     upgradeInFlight = true;
     try {
-      return await upgradeDaemon(targetVersion, noticeTarget);
+      return await upgradeDaemon(targetVersion, noticeTarget, onProgress);
     } finally {
       upgradeInFlight = false;
     }
   }
 
-async function upgradeDaemon(targetVersion: string, noticeTarget?: UpgradeNoticeTarget): Promise<string> {
+async function upgradeDaemon(targetVersion: string, noticeTarget?: UpgradeNoticeTarget, onProgress?: (phase: string) => void): Promise<string> {
     const current = pluginVersion();
     const spec = daemonSpec();
     const networkPolicy = resolveUpgradeNetworkPolicy(process.env.OMP_FEISHU_NETWORK);
@@ -616,6 +617,7 @@ async function upgradeDaemon(targetVersion: string, noticeTarget?: UpgradeNotice
     {
       let latest: string | undefined;
       if (!targetVersion) {
+        onProgress?.("正在查询 npm 最新版本");
         const failures: string[] = [];
         const queryScript = 'fetch("https://registry.npmjs.org/@caichengle/omp-feishu-lark/latest").then(async r=>{if(!r.ok) throw new Error(`HTTP ${r.status}`); const j=await r.json(); if(typeof j.version!=="string") throw new Error("missing version"); console.log(j.version)})';
         for (const attemptArgs of registryNetworkAttempts(networkPolicy)) {
@@ -648,6 +650,7 @@ async function upgradeDaemon(targetVersion: string, noticeTarget?: UpgradeNotice
     if (compareVersions(target, current) < 0) {
       return `目标版本 ${target} 低于当前版本 ${current}，拒绝降级。`;
     }
+    onProgress?.(`已确认 v${target}，正在下载并安装`);
     // 从自身入口自动定位真实安装目录，不依赖 cwd、环境变量或人工传参。
     const pluginDir = dirname(dirname(spec.extensionPath));
     // --no-restart：安装器只替换文件，不重启 daemon（避免 90s 超时与残留进程）。
@@ -674,6 +677,7 @@ async function upgradeDaemon(targetVersion: string, noticeTarget?: UpgradeNotice
     if (!installed) {
       throw new Error(`升级安装失败（network=${networkPolicy}）：${installFailures.join(" | ") || "安装器未返回错误详情"}`);
     }
+    onProgress?.("安装完成，正在重启飞书服务");
     if (process.env.PI_FEISHU_DAEMON === "1") {
       // 升级前记录通知目标：找最近活跃的 p2p 会话，新 daemon 启动连上 WS 后
       // 会读 upgrade-notice.json 给这个会话补发"升级完成"消息 —— 不补，用户只能死等。

@@ -24,7 +24,8 @@ export class FeishuMessageHandler {
     private readonly diagnostics?: {
       doctor: (detailed?: boolean) => string | Promise<string>;
       version: (detailed?: boolean) => string;
-      upgrade?: (version?: string, target?: { chatId: string; messageId: string; sessionKey: string; chatType: string }) => Promise<string>;
+      upgrade?: (version?: string, target?: { chatId: string; messageId: string; sessionKey: string; chatType: string }, onProgress?: (phase: string) => void) => Promise<string>;
+      upgradeTimeoutSeconds?: number;
       isAdmin?: (openId: string) => boolean;
       status?: (detailed?: boolean) => string | Promise<string>;
       debug?: () => string | Promise<string>;
@@ -240,15 +241,44 @@ export class FeishuMessageHandler {
         await transport.replyText(msg.messageId, `无权执行远程升级。请在 OMP 中运行 /feishu upgrade，或将你的 Open ID 加入 adminOpenIds：${msg.senderOpenId}`);
         return true;
       }
-      // 先回执，再触发升级：daemon 内升级会重启进程，入口回复必须先发出。
-      await transport.replyText(msg.messageId, "收到，正在检查并升级插件…升级成功后服务会自动重启恢复。");
-      const report = await this.diagnostics?.upgrade?.(command.version, {
-        chatId: msg.chatId,
-        messageId: msg.messageId,
-        sessionKey: key,
-        chatType: msg.chatType,
+      const timeoutSeconds = Math.max(1, this.diagnostics?.upgradeTimeoutSeconds || 600);
+      const startedAt = Date.now();
+      let phase = "正在检查最新版本";
+      let progressMessageId: string | undefined;
+      const buildProgress = () => buildUpgradeProgressCard({
+        phase,
+        remainingSeconds: Math.max(0, timeoutSeconds - Math.floor((Date.now() - startedAt) / 1000)),
       });
-      if (report) await transport.replyText(msg.messageId, report);
+      try {
+        progressMessageId = await transport.replyCard(msg.messageId, buildProgress());
+      } catch (error) {
+        debugLog("feishu.upgrade.progress_card_error", { messageId: msg.messageId, error: error instanceof Error ? error.message : String(error) });
+        await transport.replyText(msg.messageId, "收到，正在升级插件。服务会短暂重启，完成后将自动发送自检结果。");
+      }
+      const refreshProgress = () => {
+        if (!progressMessageId) return;
+        void transport.updateCard(progressMessageId, buildProgress()).catch((error) => {
+          debugLog("feishu.upgrade.progress_update_error", { messageId: progressMessageId, error: error instanceof Error ? error.message : String(error) });
+        });
+      };
+      const timer = setInterval(refreshProgress, 5_000);
+      timer.unref?.();
+      try {
+        const report = await this.diagnostics?.upgrade?.(command.version, {
+          chatId: msg.chatId,
+          messageId: msg.messageId,
+          sessionKey: key,
+          chatType: msg.chatType,
+        }, (nextPhase) => {
+          phase = nextPhase;
+          refreshProgress();
+        });
+        phase = "升级文件已就绪，正在重启飞书服务";
+        refreshProgress();
+        if (report) await transport.replyText(msg.messageId, report);
+      } finally {
+        clearInterval(timer);
+      }
       return true;
     }
 
@@ -447,4 +477,35 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, timeoutMes
   } finally {
     if (timer) clearTimeout(timer);
   }
+}
+
+export function buildUpgradeProgressCard(input: { phase: string; remainingSeconds: number }) {
+  return {
+    config: { wide_screen_mode: true, update_multi: true },
+    header: {
+      template: "blue",
+      title: { tag: "plain_text", content: "飞书插件升级中" },
+    },
+    elements: [
+      {
+        tag: "div",
+        text: { tag: "lark_md", content: `当前阶段：${input.phase}` },
+      },
+      {
+        tag: "div",
+        text: { tag: "lark_md", content: `预计剩余：${formatUpgradeRemaining(input.remainingSeconds)}` },
+      },
+      {
+        tag: "note",
+        elements: [{ tag: "plain_text", content: "升级期间机器人会短暂重启；完成后会自动补发自检结果。" }],
+      },
+    ],
+  };
+}
+
+export function formatUpgradeRemaining(seconds: number) {
+  const safeSeconds = Math.max(0, Math.floor(seconds));
+  const minutes = Math.floor(safeSeconds / 60);
+  const rest = safeSeconds % 60;
+  return minutes ? `${minutes} 分 ${rest} 秒` : `${rest} 秒`;
 }
