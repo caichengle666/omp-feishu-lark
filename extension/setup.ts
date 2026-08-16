@@ -31,6 +31,12 @@ export async function uiConfirm(ctx: ExtensionCommandContext, title: string, ini
   return initial;
 }
 
+function resolveAdminOpenIds(input: string): string[] | undefined {
+  if (!input.trim()) return undefined;
+  const ids = [...new Set(input.split(",").map((id) => id.trim()).filter(Boolean))];
+  return ids.length ? ids : undefined;
+}
+
 export async function runSetup(ctx: ExtensionCommandContext) {
   ensureRoot();
   const mode = await uiSelect(ctx,
@@ -80,6 +86,7 @@ export async function runSetup(ctx: ExtensionCommandContext) {
     domain,
     groupPolicy,
     language: "zh",
+    adminOpenIds: resolveAdminOpenIds(await uiInput(ctx, `管理员 Open ID（逗号分隔，可留空。当前：${(loadConfig()?.adminOpenIds || []).join(",") || "无"}）`, (loadConfig()?.adminOpenIds || []).join(",").trim())),
     reactEmoji: DEFAULT_CONFIG.reactEmoji,
     autoStart: true,
     promptTimeoutEnabled: false,

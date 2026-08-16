@@ -1,6 +1,11 @@
 import { afterEach, test } from "bun:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { checkFeishuApp } from "../extension/setup.ts";
+
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 let server;
 
@@ -50,4 +55,11 @@ test("setup rejects missing Feishu permissions", async () => {
     checkFeishuApp({ appId: "cli_test", appSecret: "secret", domain: "feishu" }, server.url.origin),
     /im:message:send_as_bot/,
   );
+});
+
+test("setup prompts for admin Open IDs so operators do not need SSH", () => {
+  const source = readFileSync(join(repoRoot, "extension", "setup.ts"), "utf8");
+  assert.match(source, /resolveAdminOpenIds/);
+  assert.match(source, /管理员 Open ID（逗号分隔.*当前/);
+  assert.match(source, /adminOpenIds: resolveAdminOpenIds/);
 });
