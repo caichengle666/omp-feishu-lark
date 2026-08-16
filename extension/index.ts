@@ -20,7 +20,7 @@ import { acquireFileLease, acquireGatewayLock, gatewayLockPath, readGatewayOwner
 import { FeishuMessageHandler } from "./message-handler.js";
 import { runSetup, uiConfirm } from "./setup.js";
 import { buildTaskStatusCard, parseStopTaskActionValue } from "./task-status-card.js";
-import { bunDnsArgs, compareVersions, registryNetworkAttempts, resolveTargetVersion, resolveUpgradeNetworkPolicy, upgradeTimeoutMs } from "./upgrade.js";
+import { bunDnsArgs, compareVersions, resolveTargetVersion, resolveUpgradeNetworkPolicy, upgradeTimeoutMs } from "./upgrade.js";
 import { BotUnavailableError, FeishuTransport } from "./transport.js";
 import type { FeishuConfig, FeishuStatus } from "./types.js";
 
@@ -534,23 +534,14 @@ async function upgradeDaemon(targetVersion: string, noticeTarget?: UpgradeNotice
     {
       let latest: string | undefined;
       if (!targetVersion) {
-        const failures: string[] = [];
-        for (const attemptArgs of registryNetworkAttempts(networkPolicy)) {
-          const result = await runProcess(spec.bunBin, [...attemptArgs, "pm", "view", "@caichengle/omp-feishu-lark", "version"], {
-            timeout: 30_000,
-            cwd: process.cwd(),
-            env: { ...process.env },
-          });
-          const candidate = result.stdout.trim().split(/\r?\n/).pop();
-          if (result.code === 0 && candidate) {
-            latest = candidate;
-            dnsArgs = attemptArgs;
-            break;
-          }
-          failures.push((result.stderr || result.stdout || `exit ${result.code ?? "unknown"}`).trim().split(/\r?\n/).pop() || "unknown error");
-        }
-        if (!latest) {
-          throw new Error(`无法查询 npm registry（network=${networkPolicy}）：${failures.join(" | ")}。可设置 OMP_FEISHU_NETWORK=ipv4 或 ipv6 后重试。`);
+        // fetch() works in any cwd; bun pm view requires a package.json in
+        // the working directory, which the daemon workspace does not have.
+        try {
+          const http = await fetch("https://registry.npmjs.org/@caichengle/omp-feishu-lark/latest", { signal: AbortSignal.timeout(15_000) });
+          if (!http.ok) throw new Error(`HTTP ${http.status}`);
+          latest = (await http.json() as { version?: string }).version;
+        } catch (error) {
+          throw new Error(`无法查询 npm registry：${error instanceof Error ? error.message : String(error)}。可设置 OMP_FEISHU_NETWORK=ipv4 或 ipv6 后重试。`);
         }
       }
       const resolved = resolveTargetVersion(targetVersion, latest);

@@ -93,7 +93,7 @@ test("upgrade pins the package version and runs the installer asynchronously", (
   assert.match(source, /await runProcess\(spec\.bunBin, args/);
   assert.doesNotMatch(source, /spawnSync\(spec\.bunBin, args/);
   assert.match(source, /OMP_FEISHU_UPGRADE_TIMEOUT_SEC/);
-  assert.match(source, /registryNetworkAttempts\(networkPolicy\)/);
+  assert.match(source, /registry\.npmjs\.org/);
   assert.match(source, /terminateProcessTree\(child\.pid\)/);
   assert.match(source, /if \(upgradeInFlight\) return "已有升级任务正在执行/);
   assert.match(source, /targets: \[targetForNotice\]/);
