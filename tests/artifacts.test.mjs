@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { test } from "bun:test";
@@ -98,6 +98,43 @@ test("collectSendableArtifacts resolves tts output_path relative to the workspac
   }
 });
 
+test("artifact validation rejects workspace symlinks that resolve outside the workspace", () => {
+  const root = tempRoot();
+  try {
+    const workspace = join(root, "workspace");
+    const outside = join(root, "outside");
+    mkdirSync(outside);
+    writeFileSync(join(outside, "secret.pdf"), "secret");
+    symlinkSync(outside, join(workspace, "linked"), "junction");
+    const linked = join(workspace, "linked", "secret.pdf");
+
+    assert.deepEqual(collectSendableArtifacts({
+      type: "tool_execution_end",
+      toolName: "write",
+      isError: false,
+      result: { details: { resolvedPath: linked } },
+    }, workspace), []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("ordinary file tools are collected only after a successful end event", () => {
+  const root = tempRoot();
+  try {
+    const workspace = join(root, "workspace");
+    const existing = join(workspace, "existing.pdf");
+    writeFileSync(existing, "old");
+    assert.deepEqual(collectSendableArtifacts({
+      type: "tool_execution_start",
+      toolName: "write",
+      args: { path: existing },
+    }, workspace), []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("TaskStatusCard sends collected artifacts only when the task finishes as done", async () => {
   const root = tempRoot();
   try {
@@ -171,6 +208,33 @@ test("TaskStatusCard does not send artifacts when the task fails", async () => {
     await card.start();
     await card.finish("failed", "模型调用失败");
     assert.equal(sent, false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("TaskStatusCard limits automatic artifact delivery to ten files", async () => {
+  const root = tempRoot();
+  try {
+    const workspace = join(root, "workspace");
+    const sent = [];
+    const transport = {
+      replyCard: async () => "card_1",
+      updateCard: async () => {},
+      replyLocalFile: async (_messageId, filePath) => {
+        sent.push(filePath);
+        return { kind: "file", fileName: basename(filePath) };
+      },
+    };
+    const card = new TaskStatusCard("p2p:ou_test", "om_limit", transport, workspace);
+    for (let index = 0; index < 12; index += 1) {
+      const filePath = join(workspace, `report-${index}.pdf`);
+      writeFileSync(filePath, "pdf");
+      card.updateFromEvent({ type: "tool_execution_end", toolName: "write", isError: false, result: { details: { resolvedPath: filePath } } });
+    }
+    await card.start();
+    await card.finish("done");
+    assert.equal(sent.length, 10);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

@@ -240,6 +240,7 @@ test("installs and manages the proactive notification webhook", () => {
   assert.match(source, /await notificationWebhook\.start\(\)/);
   assert.match(source, /await notificationWebhook\?\.stop\(\)/);
   assert.match(installerSource, /"notification-webhook\.ts"/);
+  assert.match(installerSource, /"artifacts\.ts"/);
   assert.match(installerSource, /"help\.ts"/);
 });
 

@@ -19,6 +19,7 @@ type TaskStatusTransport = {
 
 const STOP_ACTION = "pi_feishu_stop_task";
 const MAX_PHASE_CHARS = 96;
+const MAX_ARTIFACTS_PER_TASK = 10;
 const STILL_RUNNING_MS = 25_000;
 const RUNNING_UPDATE_INTERVAL_MS = 3_000;
 
@@ -38,7 +39,7 @@ export class TaskStatusCard implements TaskStatusSink {
   private runningUpdateInFlight = false;
   private patchQueue: Promise<void> = Promise.resolve();
   private version = 0;
-  private readonly artifactPaths = new Set<string>();
+  private readonly artifactPaths = new Map<string, boolean>();
 
   constructor(
     private readonly key: string,
@@ -70,8 +71,9 @@ export class TaskStatusCard implements TaskStatusSink {
     if (this.status !== "running") return;
     const raw = event as any;
     if (raw?.type === "tool_execution_start" || raw?.type === "tool_execution_end") {
-      for (const filePath of collectArtifactCandidates(event, this.workspaceRoot)) {
-        this.artifactPaths.add(filePath);
+      for (const candidate of collectArtifactCandidates(event, this.workspaceRoot)) {
+        if (this.artifactPaths.size >= MAX_ARTIFACTS_PER_TASK && !this.artifactPaths.has(candidate.path)) break;
+        this.artifactPaths.set(candidate.path, candidate.allowOutsideWorkspace);
       }
     }
     if (raw?.type === "tool_execution_start") {
@@ -106,7 +108,9 @@ export class TaskStatusCard implements TaskStatusSink {
 
   private async sendArtifacts() {
     if (this.status !== "done") return;
-    const filePaths = [...this.artifactPaths].filter(isExistingSendableArtifact);
+    const filePaths = [...this.artifactPaths]
+      .filter(([filePath, allowOutside]) => isExistingSendableArtifact(filePath, this.workspaceRoot, allowOutside))
+      .map(([filePath]) => filePath);
     if (!filePaths.length) return;
     let sentCount = 0;
     let failedCount = 0;

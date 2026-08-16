@@ -62,11 +62,11 @@ export default function feishuExtension(pi: ExtensionAPI) {
     promptTimeoutEnabled: bootConfig?.promptTimeoutEnabled,
   }, rpcWorkers);
   const messageHandler = new FeishuMessageHandler(conversations, () => transport, bridgeStore, {
-    doctor: () => doctorReport(),
-    version: () => versionReport(),
+    doctor: (detailed = true) => doctorReport(detailed),
+    version: (detailed = true) => versionReport(detailed),
     upgrade: (version, target) => requestUpgrade(version || "", target),
     isAdmin: (openId: string) => isFeishuAdmin(loadConfig(), openId),
-    status: () => statusReport(),
+    status: (detailed = true) => statusReport(detailed),
     debug: () => debugReport(),
     refresh: () => refreshReport(),
     config: () => configReport(),
@@ -108,10 +108,16 @@ export default function feishuExtension(pi: ExtensionAPI) {
     return withBuildTag(`${brand}: ${labels[status]}`);
   }
 
-  function statusReport() {
+  function statusReport(detailed = true) {
     refreshStatusFromState();
     const cfg = loadConfig();
     const owner = gatewayLock?.owner || readGatewayOwner();
+    if (!detailed) {
+      return [
+        `Status: ${lastStatusText || (cfg ? "Feishu: disconnected" : "Feishu: not configured")}`,
+        `Feishu plugin: ${pluginVersion()}`,
+      ].join("\n");
+    }
     return [
       `Status: ${lastStatusText || (loadConfig() ? "Feishu: disconnected" : "Feishu: not configured")}`,
       `Gateway owner: ${formatOwner(owner)}`,
@@ -426,25 +432,34 @@ export default function feishuExtension(pi: ExtensionAPI) {
     else removePath(UPGRADE_NOTICE_PATH);
   }
 
-  function versionReport() {
+  function versionReport(detailed = true) {
     const omp = spawnSync(ompCliPath, ["--version"], { encoding: "utf8", timeout: 5_000 });
     const ompVersion = omp.status === 0 ? `${omp.stdout || omp.stderr}`.trim() : "unavailable";
-    return [
+    const report = [
       `Feishu plugin: ${pluginVersion()}`,
       `OMP: ${ompVersion || "unknown"}`,
       `Bun: ${process.versions.bun || process.version}`,
-      `Agent dir: ${getAgentDir()}`,
-      `Workspace: ${process.cwd()}`,
-      `Config: ${CONFIG_PATH}`,
-    ].join("\n");
+    ];
+    if (detailed) report.push(`Agent dir: ${getAgentDir()}`, `Workspace: ${process.cwd()}`, `Config: ${CONFIG_PATH}`);
+    return report.join("\n");
   }
 
-  async function doctorReport() {
+  async function doctorReport(detailed = true) {
     const cfg = loadConfig();
     const owner = gatewayLock?.owner || readGatewayOwner();
     const supervisor = readSupervisorRecord(SUPERVISOR_PID_PATH);
     const supervisorRunning = supervisor ? isSupervisorProcessAlive(supervisor) : false;
     const models = await conversations.getAvailableModels().catch(() => []);
+    if (!detailed) {
+      return [
+        "Feishu doctor",
+        `version: ${pluginVersion()}`,
+        `${cfg ? "OK" : "FAIL"} config`,
+        `${owner?.status === "connected" ? "OK" : "WARN"} gateway`,
+        `${supervisorRunning ? "OK" : "WARN"} supervisor`,
+        `${models.length ? "OK" : "FAIL"} models: ${models.length} available`,
+      ].join("\n");
+    }
     const checks = [
       `${cfg ? "OK" : "FAIL"} config: ${cfg ? CONFIG_PATH : "missing; run /feishu setup"}`,
       `${existsSync(ompCliPath) ? "OK" : "FAIL"} omp cli: ${ompCliPath}`,

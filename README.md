@@ -172,9 +172,9 @@ used to suppress repeat delivery. The same settings can be supplied through
 Run `/feishu help` in OMP, or send `/feishu help` or `/help` to the bot, for a
 Chinese description of every plugin and chat command.
 
-In Feishu, send `/send PATH` to upload a file from the current chat workspace.
+Administrators can send `/send PATH` in Feishu to upload a file from the current chat workspace.
 Supported images are sent as image messages; other files are uploaded through the
-bot file API. Group chats require an administrator. Administrators can inspect
+bot file API. Administrators can inspect
 masked settings with `/feishu config` in OMP or Feishu.
 
 When an OMP task succeeds, generated images, documents, and audio files are
