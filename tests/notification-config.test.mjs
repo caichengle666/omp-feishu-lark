@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { validateConfig } from "../extension/config.ts";
+import { isFeishuAdmin, validateConfig } from "../extension/config.ts";
 
 const base = {
   appId: "cli_test",
@@ -31,4 +31,12 @@ test("card action webhook mode requires a verification token", () => {
   const config = validateConfig({ ...base, cardActionMode: "webhook", cardActionToken: "card-token" });
   assert.equal(config?.cardActionMode, "webhook");
   assert.equal(config?.cardActionToken, "card-token");
+});
+
+test("remote administration is denied by default and allows configured open IDs", () => {
+  assert.equal(isFeishuAdmin(validateConfig(base), "ou_admin"), false);
+  const config = validateConfig({ ...base, adminOpenIds: [" ou_admin ", "ou_admin"] });
+  assert.deepEqual(config?.adminOpenIds, ["ou_admin"]);
+  assert.equal(isFeishuAdmin(config, "ou_admin"), true);
+  assert.equal(isFeishuAdmin(config, "ou_other"), false);
 });

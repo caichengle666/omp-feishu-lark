@@ -89,6 +89,7 @@ export function loadConfig(): FeishuConfig | undefined {
       language: (process.env.FEISHU_LANGUAGE as "zh" | "en") || DEFAULT_CONFIG.language,
       reactEmoji: process.env.FEISHU_REACT_EMOJI || DEFAULT_CONFIG.reactEmoji,
       autoStart: process.env.FEISHU_AUTO_START ? process.env.FEISHU_AUTO_START !== "0" : DEFAULT_CONFIG.autoStart,
+      adminOpenIds: parseAdminOpenIds(process.env.FEISHU_ADMIN_OPEN_IDS),
       promptNotifySec: parseEnvSeconds(process.env.FEISHU_PROMPT_NOTIFY_SEC) ?? DEFAULT_CONFIG.promptNotifySec,
       promptTimeoutSec: parseEnvSeconds(process.env.FEISHU_PROMPT_TIMEOUT_SEC) ?? DEFAULT_CONFIG.promptTimeoutSec,
       promptTimeoutEnabled: parseEnvBoolean(process.env.FEISHU_PROMPT_TIMEOUT_ENABLED) ?? DEFAULT_CONFIG.promptTimeoutEnabled,
@@ -114,6 +115,7 @@ export function loadConfig(): FeishuConfig | undefined {
     language: cfg.language || DEFAULT_CONFIG.language,
     reactEmoji: cfg.reactEmoji || DEFAULT_CONFIG.reactEmoji,
     autoStart: cfg.autoStart ?? DEFAULT_CONFIG.autoStart,
+    adminOpenIds: normalizeAdminOpenIds(cfg.adminOpenIds),
     promptNotifySec: numberOr(cfg.promptNotifySec, DEFAULT_CONFIG.promptNotifySec),
     promptTimeoutSec: numberOr(cfg.promptTimeoutSec, DEFAULT_CONFIG.promptTimeoutSec),
     promptTimeoutEnabled: cfg.promptTimeoutEnabled ?? DEFAULT_CONFIG.promptTimeoutEnabled,
@@ -159,10 +161,25 @@ export function validateConfig(value: unknown): FeishuConfig | undefined {
     language,
     reactEmoji: typeof raw.reactEmoji === "string" ? raw.reactEmoji : DEFAULT_CONFIG.reactEmoji,
     autoStart: typeof raw.autoStart === "boolean" ? raw.autoStart : DEFAULT_CONFIG.autoStart,
+    adminOpenIds: normalizeAdminOpenIds(raw.adminOpenIds),
     promptNotifySec,
     promptTimeoutSec,
     promptTimeoutEnabled: typeof raw.promptTimeoutEnabled === "boolean" ? raw.promptTimeoutEnabled : DEFAULT_CONFIG.promptTimeoutEnabled,
   };
+}
+
+export function isFeishuAdmin(config: FeishuConfig | undefined, openId: string) {
+  return Boolean(openId && config?.adminOpenIds?.includes(openId));
+}
+
+function parseAdminOpenIds(value: string | undefined) {
+  return value ? normalizeAdminOpenIds(value.split(",")) : undefined;
+}
+
+function normalizeAdminOpenIds(value: unknown) {
+  if (!Array.isArray(value)) return undefined;
+  const ids = [...new Set(value.filter((item): item is string => typeof item === "string").map((item) => item.trim()).filter(Boolean))];
+  return ids.length ? ids : undefined;
 }
 
 function parseEnvSeconds(value: string | undefined) {

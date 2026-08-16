@@ -163,6 +163,20 @@ test("registers OMP argument completions for /feishu subcommands", () => {
   assert.match(source, /ctx\.ui\.notify\(feishuHelpText\(\), "info"\)/);
 });
 
+test("setup restarts a running gateway, restores the old config on failure, and reset fails closed", () => {
+  const source = readFileSync(extensionPath, "utf8");
+  assert.match(source, /const hadRunningGateway = Boolean\(transport\?\.isRunning\(\) \|\| readGatewayOwner\(\)\)/);
+  assert.match(source, /if \(hadRunningGateway\) \{[\s\S]*await restartDaemon\(\)/);
+  assert.match(source, /if \(previousConfig === undefined\) removePath\(CONFIG_PATH\);[\s\S]*writeFileSync\(CONFIG_PATH, previousConfig/);
+  assert.match(source, /const stopped = await stopDaemon\(\);[\s\S]*if \(stopped\.status === "error"\)[\s\S]*重置已取消/);
+});
+
+test("remote upgrade requires an explicitly configured Feishu administrator", () => {
+  const handlerSource = readFileSync(join(repoRoot, "extension", "message-handler.ts"), "utf8");
+  assert.match(handlerSource, /if \(!this\.diagnostics\?\.isAdmin\?\.\(msg\.senderOpenId\)\)/);
+  assert.match(handlerSource, /无权执行远程升级/);
+});
+
 test("provides doctor/version diagnostics and injects the release version into daemons", () => {
   const source = readFileSync(extensionPath, "utf8");
   const installerSource = readFileSync(join(repoRoot, "src", "cli.ts"), "utf8");

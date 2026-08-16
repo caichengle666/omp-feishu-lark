@@ -7,7 +7,7 @@ import { getAgentDir } from "@oh-my-pi/pi-coding-agent";
 import { RpcClient } from "@oh-my-pi/pi-coding-agent/modes/rpc/rpc-client";
 import { buildModelCard, buildResumeCard, parseModelActionValue, parseResumePageActionValue, parseResumeSelectActionValue } from "./cards.js";
 import { isSupervisorProcessAlive, readSupervisorRecord, recordedProcessStatus, writeStopRequest } from "../support/feishu-supervisor.mjs";
-import { BRIDGE_PATH, CONFIG_PATH, DAEMON_LOG_PATH, DEBUG_LOG_PATH, DEDUPE_PATH, ensureRoot, loadConfig, mask, readJson, removePath, STATE_PATH, SUPERVISOR_PID_PATH, SUPERVISOR_STOP_PATH, UPGRADE_NOTICE_PATH, writeJson } from "./config.js";
+import { BRIDGE_PATH, CONFIG_PATH, DAEMON_LOG_PATH, DEBUG_LOG_PATH, DEDUPE_PATH, ensureRoot, isFeishuAdmin, loadConfig, mask, readJson, removePath, STATE_PATH, SUPERVISOR_PID_PATH, SUPERVISOR_STOP_PATH, UPGRADE_NOTICE_PATH, writeJson } from "./config.js";
 import { debugLog, flushDebugLog } from "./debug.js";
 import { FeishuBridgeRuntime } from "./bridge-runtime.js";
 import { FeishuBridgeStore } from "./bridge-store.js";
@@ -49,6 +49,7 @@ export default function feishuExtension(pi: ExtensionAPI) {
     doctor: () => doctorReport(),
     version: () => versionReport(),
     upgrade: (version?: string) => upgradeDaemon(version || ""),
+    isAdmin: (openId: string) => isFeishuAdmin(loadConfig(), openId),
   });
 
   const STATUS_KEY = "feishu-connection";
@@ -549,10 +550,27 @@ async function upgradeDaemon(targetVersion: string): Promise<string> {
           return;
         }
         if (cmd === "setup") {
-          const configToStart = await runSetup(ctx);
-          if (configToStart) {
-            writeJson(CONFIG_PATH, configToStart);
-            notifyDaemonStartResult(ctx, await startDaemon(false));
+          const previousConfig = existsSync(CONFIG_PATH) ? readFileSync(CONFIG_PATH, "utf8") : undefined;
+          const setup = await runSetup(ctx);
+          const hadRunningGateway = Boolean(transport?.isRunning() || readGatewayOwner());
+          writeJson(CONFIG_PATH, setup.config);
+          if (setup.startNow) {
+            try {
+              if (hadRunningGateway) {
+                const result = await restartDaemon();
+                if (result.status === "error") throw result.stopped.error;
+                ctx.ui.notify(`飞书配置已更新，连接已重启。\nOwner: ${formatOwner(result.started.owner)}`, "info");
+              } else {
+                notifyDaemonStartResult(ctx, await startDaemon(false));
+              }
+            } catch (error) {
+              if (previousConfig === undefined) removePath(CONFIG_PATH);
+              else writeFileSync(CONFIG_PATH, previousConfig, "utf8");
+              if (hadRunningGateway) await startDaemon(true).catch(() => undefined);
+              throw new Error(`新配置启动失败，已恢复原配置：${error instanceof Error ? error.message : String(error)}`);
+            }
+          } else {
+            ctx.ui.notify(`飞书配置已保存。\nPath: ${CONFIG_PATH}\nApp ID: ${mask(setup.config.appId)}`, "info");
           }
           refreshStatusFromState();
           return;
@@ -617,7 +635,12 @@ async function upgradeDaemon(targetVersion: string): Promise<string> {
             ctx.ui.notify("Reset cancelled / 已取消重置", "info");
             return;
           }
-          await stopDaemon();
+          const stopped = await stopDaemon();
+          if (stopped.status === "error") {
+            ctx.ui.notify(`重置已取消：无法停止飞书连接。${stopped.error instanceof Error ? stopped.error.message : String(stopped.error)}`, "error");
+            refreshStatusFromState();
+            return;
+          }
           removePath(CONFIG_PATH);
           removePath(STATE_PATH);
           removePath(DEDUPE_PATH);
