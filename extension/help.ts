@@ -23,5 +23,6 @@ export function feishuHelpText() {
     "/stop - 停止当前聊天正在执行的任务",
     "/workspace PATH - 切换当前聊天的工作目录（群聊需管理员）",
     "/send PATH - 发送当前工作区内的文件或图片（群聊需管理员）",
+    "自动发送 - OMP 任务完成后，自动把生成的图片、文档、音频发回当前飞书会话",
   ].join("\n");
 }

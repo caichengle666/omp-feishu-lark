@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { debugLog } from "./debug.js";
+import { collectArtifactCandidates, isExistingSendableArtifact } from "./artifacts.js";
 
 export type TaskStatus = "running" | "done" | "failed" | "stopped" | "inactive";
 
@@ -13,6 +14,7 @@ export type TaskStatusSink = {
 type TaskStatusTransport = {
   replyCard(messageId: string, card: object): Promise<string | undefined>;
   updateCard(messageId: string, card: object): Promise<void>;
+  replyLocalFile(messageId: string, filePath: string): Promise<{ kind: "image" | "file"; fileName: string } | undefined>;
 };
 
 const STOP_ACTION = "pi_feishu_stop_task";
@@ -36,11 +38,13 @@ export class TaskStatusCard implements TaskStatusSink {
   private runningUpdateInFlight = false;
   private patchQueue: Promise<void> = Promise.resolve();
   private version = 0;
+  private readonly artifactPaths = new Set<string>();
 
   constructor(
     private readonly key: string,
     private readonly replyToMessageId: string,
     private readonly transport: TaskStatusTransport,
+    private readonly workspaceRoot?: string,
   ) {}
 
   async start() {
@@ -65,6 +69,11 @@ export class TaskStatusCard implements TaskStatusSink {
   updateFromEvent(event: unknown) {
     if (this.status !== "running") return;
     const raw = event as any;
+    if (raw?.type === "tool_execution_start" || raw?.type === "tool_execution_end") {
+      for (const filePath of collectArtifactCandidates(event, this.workspaceRoot)) {
+        this.artifactPaths.add(filePath);
+      }
+    }
     if (raw?.type === "tool_execution_start") {
       this.toolCalls += 1;
       this.currentTool = typeof raw.toolName === "string" && raw.toolName ? raw.toolName : "tool";
@@ -82,6 +91,7 @@ export class TaskStatusCard implements TaskStatusSink {
 
   async finish(status: Exclude<TaskStatus, "running" | "inactive">, phase?: string) {
     await this.finishFinal(status, phase, false);
+    if (status === "done") await this.sendArtifacts();
   }
 
   private async finishFinal(status: Exclude<TaskStatus, "running" | "inactive">, phase: string | undefined, force: boolean) {
@@ -92,6 +102,32 @@ export class TaskStatusCard implements TaskStatusSink {
     this.clearPendingRunningUpdate();
     const finalPhase = phase ? normalizePhase(phase) : defaultFinalPhase(status);
     await this.patch(this.buildCard(status, finalPhase), { final: true, force });
+  }
+
+  private async sendArtifacts() {
+    if (this.status !== "done") return;
+    const filePaths = [...this.artifactPaths].filter(isExistingSendableArtifact);
+    if (!filePaths.length) return;
+    let sentCount = 0;
+    let failedCount = 0;
+    for (const filePath of filePaths) {
+      try {
+        const sent = await this.transport.replyLocalFile(this.replyToMessageId, filePath);
+        if (sent?.fileName) {
+          sentCount += 1;
+          debugLog("feishu.task_status.artifact_sent", { key: this.key, runId: this.runId, fileName: sent.fileName });
+        }
+      } catch (error) {
+        failedCount += 1;
+        debugLog("feishu.task_status.artifact_send_error", {
+          key: this.key,
+          runId: this.runId,
+          filePath,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+    debugLog("feishu.task_status.artifacts_done", { key: this.key, runId: this.runId, total: filePaths.length, sentCount, failedCount });
   }
 
   private updateRunningPhase(phase: string) {

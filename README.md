@@ -177,6 +177,11 @@ Supported images are sent as image messages; other files are uploaded through th
 bot file API. Group chats require an administrator. Administrators can inspect
 masked settings with `/feishu config` in OMP or Feishu.
 
+When an OMP task succeeds, generated images, documents, and audio files are
+automatically sent back to the current Feishu conversation. `/send PATH` remains
+available as a manual fallback. Group chats require an administrator for manual
+sends.
+
 Remote administrative commands such as `/feishu upgrade` are denied by
 default. Add the administrator's Feishu Open ID to `adminOpenIds` in
 `config.json`, or set a comma-separated `FEISHU_ADMIN_OPEN_IDS` environment
