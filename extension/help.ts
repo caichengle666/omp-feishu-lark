@@ -20,6 +20,6 @@ export function feishuHelpText() {
     "/resume - 恢复当前聊天的历史会话",
     "/model - 选择当前聊天使用的模型",
     "/stop - 停止当前聊天正在执行的任务",
-    "/workspace PATH - 切换当前聊天的工作目录",
+    "/workspace PATH - 切换当前聊天的工作目录（群聊需管理员）",
   ].join("\n");
 }

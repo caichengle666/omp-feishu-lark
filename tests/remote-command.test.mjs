@@ -70,3 +70,20 @@ test("Feishu debug and refresh run for an administrator", async () => {
   assert.deepEqual(calls, ["debug", "refresh"]);
   assert.deepEqual(replies, ["debug report", "refresh report"]);
 });
+
+test("group workspace changes require an administrator", async () => {
+  const replies = [];
+  let switched = false;
+  const transport = { replyText: async (_messageId, text) => { replies.push(text); } };
+  const groupMessage = { ...message, chatType: "group" };
+  const handler = new FeishuMessageHandler({
+    switchWorkspace: async () => { switched = true; },
+  }, () => transport, undefined, {
+    isAdmin: () => false,
+  });
+
+  assert.equal(await handler.handleCommand(groupMessage, "group:oc_chat", "/workspace /tmp/project"), true);
+  assert.equal(switched, false);
+  assert.match(replies[0], /群聊切换工作区需要管理员权限/);
+  assert.match(replies[0], /ou_user/);
+});

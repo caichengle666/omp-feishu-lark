@@ -227,6 +227,13 @@ export class FeishuMessageHandler {
     }
 
     if (command.name === "workspace") {
+      if (msg.chatType === "group" && !this.diagnostics?.isAdmin?.(msg.senderOpenId)) {
+        await transport.replyText(
+          msg.messageId,
+          `群聊切换工作区需要管理员权限。请将你的 Open ID 加入 adminOpenIds：${msg.senderOpenId}`,
+        );
+        return true;
+      }
       await this.conversations.switchWorkspace(key, command.path, async (reply) => {
         await transport.replyText(msg.messageId, reply);
       });
