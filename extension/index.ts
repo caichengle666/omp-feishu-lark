@@ -66,6 +66,9 @@ export default function feishuExtension(pi: ExtensionAPI) {
     version: () => versionReport(),
     upgrade: (version, target) => requestUpgrade(version || "", target),
     isAdmin: (openId: string) => isFeishuAdmin(loadConfig(), openId),
+    status: () => statusReport(),
+    debug: () => debugReport(),
+    refresh: () => refreshReport(),
   });
 
   const STATUS_KEY = "feishu-connection";
@@ -102,6 +105,34 @@ export default function feishuExtension(pi: ExtensionAPI) {
       "bot unavailable": "机器人不可用 / Bot unavailable",
     };
     return withBuildTag(`${brand}: ${labels[status]}`);
+  }
+
+  function statusReport() {
+    refreshStatusFromState();
+    const cfg = loadConfig();
+    const owner = gatewayLock?.owner || readGatewayOwner();
+    return [
+      `Status: ${lastStatusText || (loadConfig() ? "Feishu: disconnected" : "Feishu: not configured")}`,
+      `Gateway owner: ${formatOwner(owner)}`,
+      `Config: ${cfg ? `${cfg.domain}, appId=${mask(cfg.appId)}, groupPolicy=${cfg.groupPolicy}, autoStart=${cfg.autoStart !== false}` : "missing"}`,
+      `Notification webhook: ${cfg?.notificationWebhookEnabled ? (notificationWebhook?.getEndpointLabel() || "enabled; check daemon owner") : "disabled"}`,
+      `Path: ${CONFIG_PATH}`,
+      `Gateway lock: ${gatewayLockPath()}`,
+      `Debug: ${DEBUG_LOG_PATH}`,
+      `Gateway log: ${DAEMON_LOG_PATH}`,
+    ].join("\n");
+  }
+
+  async function refreshReport() {
+    await conversations.refreshModels();
+    const owner = gatewayLock?.owner || readGatewayOwner();
+    return [`模型列表已刷新。`, `Owner: ${formatOwner(owner)}`, `Log: ${DAEMON_LOG_PATH}`].join("\n");
+  }
+
+  function debugReport() {
+    if (!existsSync(DEBUG_LOG_PATH)) return "还没有飞书调试日志。请先在飞书里发一条消息给机器人。";
+    const lines = readFileSync(DEBUG_LOG_PATH, "utf8").trim().split("\n").slice(-20);
+    return lines.join("\n");
   }
 
   function refreshStatusFromState() {
@@ -744,17 +775,7 @@ async function upgradeDaemon(targetVersion: string, noticeTarget?: UpgradeNotice
           return;
         }
         if (cmd === "refresh") {
-          await conversations.refreshModels();
-          const cfg = loadConfig();
-          const owner = gatewayLock?.owner || readGatewayOwner();
-          ctx.ui.notify(
-            [
-              `模型列表已刷新。`,
-              `Owner: ${formatOwner(owner)}`,
-              `Log: ${DAEMON_LOG_PATH}`,
-            ].join("\n"),
-            "info",
-          );
+          ctx.ui.notify(await refreshReport(), "info");
           return;
         }
         if (cmd === "doctor") {
@@ -766,31 +787,11 @@ async function upgradeDaemon(targetVersion: string, noticeTarget?: UpgradeNotice
           return;
         }
         if (cmd === "status") {
-          refreshStatusFromState();
-          const cfg = loadConfig();
-          const owner = gatewayLock?.owner || readGatewayOwner();
-          ctx.ui.notify(
-            [
-              `Status: ${lastStatusText || (loadConfig() ? "Feishu: disconnected" : "Feishu: not configured")}`,
-              `Gateway owner: ${formatOwner(owner)}`,
-              `Config: ${cfg ? `${cfg.domain}, appId=${mask(cfg.appId)}, groupPolicy=${cfg.groupPolicy}, autoStart=${cfg.autoStart !== false}` : "missing"}`,
-              `Notification webhook: ${cfg?.notificationWebhookEnabled ? (notificationWebhook?.getEndpointLabel() || "enabled; check daemon owner") : "disabled"}`,
-              `Path: ${CONFIG_PATH}`,
-              `Gateway lock: ${gatewayLockPath()}`,
-              `Debug: ${DEBUG_LOG_PATH}`,
-              `Gateway log: ${DAEMON_LOG_PATH}`,
-            ].join("\n"),
-            "info",
-          );
+          ctx.ui.notify(statusReport(), "info");
           return;
         }
         if (cmd === "debug") {
-          if (!existsSync(DEBUG_LOG_PATH)) {
-            ctx.ui.notify("还没有飞书调试日志。请先在飞书里发一条消息给机器人。", "info");
-            return;
-          }
-          const lines = readFileSync(DEBUG_LOG_PATH, "utf8").trim().split("\n").slice(-20);
-          ctx.ui.notify(lines.join("\n"), "info");
+          ctx.ui.notify(debugReport(), "info");
           return;
         }
         if (cmd === "autostart") {

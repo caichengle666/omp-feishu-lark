@@ -26,6 +26,9 @@ export class FeishuMessageHandler {
       version: () => string;
       upgrade?: (version?: string, target?: { chatId: string; messageId: string; sessionKey: string; chatType: string }) => Promise<string>;
       isAdmin?: (openId: string) => boolean;
+      status?: () => string | Promise<string>;
+      debug?: () => string | Promise<string>;
+      refresh?: () => string | Promise<string>;
     },
   ) {}
 
@@ -169,6 +172,32 @@ export class FeishuMessageHandler {
 
     if (command.name === "help") {
       await transport.replyText(msg.messageId, feishuHelpText());
+      return true;
+    }
+
+    if (command.name === "setup") {
+      await transport.replyText(
+        msg.messageId,
+        "/feishu setup 需要交互式界面，请在 OMP 后台运行。飞书端暂不支持扫码或输入表单配置；配置好后运行 /feishu restart 生效。",
+      );
+      return true;
+    }
+
+    if (command.name === "status") {
+      const text = await this.diagnostics?.status?.();
+      await transport.replyText(msg.messageId, text || "状态功能尚未准备好，请在 OMP 中运行 /feishu status。");
+      return true;
+    }
+
+    if (command.name === "debug" || command.name === "refresh") {
+      if (!this.diagnostics?.isAdmin?.(msg.senderOpenId)) {
+        await transport.replyText(msg.messageId, `无权执行远程 ${command.name}。请在 OMP 中运行 /feishu ${command.name}，或将你的 Open ID 加入 adminOpenIds：${msg.senderOpenId}`);
+        return true;
+      }
+      const text = command.name === "debug"
+        ? await this.diagnostics?.debug?.()
+        : await this.diagnostics?.refresh?.();
+      await transport.replyText(msg.messageId, text || "该功能尚未准备好，请在 OMP 中运行 /feishu " + command.name + ".");
       return true;
     }
 
