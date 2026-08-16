@@ -46,6 +46,8 @@ export class TaskStatusCard implements TaskStatusSink {
     private readonly replyToMessageId: string,
     private readonly transport: TaskStatusTransport,
     private readonly workspaceRoot?: string,
+    private readonly ownerOpenId?: string,
+    private readonly chatId?: string,
   ) {}
 
   async start() {
@@ -258,11 +260,13 @@ export class TaskStatusCard implements TaskStatusSink {
       elapsedMs: Date.now() - this.startedAt,
       toolCalls: this.toolCalls,
       currentTool: this.currentTool,
+      ownerOpenId: this.ownerOpenId,
+      chatId: this.chatId,
     });
   }
 }
 
-export function buildTaskStatusCard(input: { key: string; status: TaskStatus; phase?: string; runId?: string; elapsedMs?: number; toolCalls?: number; currentTool?: string }) {
+export function buildTaskStatusCard(input: { key: string; status: TaskStatus; phase?: string; runId?: string; elapsedMs?: number; toolCalls?: number; currentTool?: string; ownerOpenId?: string; chatId?: string }) {
   const running = input.status === "running";
   return {
     config: {
@@ -298,7 +302,7 @@ export function buildTaskStatusCard(input: { key: string; status: TaskStatus; ph
           tag: "button",
           text: { tag: "plain_text", content: "停止任务" },
           type: "danger",
-          value: { action: STOP_ACTION, key: input.key, runId: input.runId },
+          value: { action: STOP_ACTION, key: input.key, runId: input.runId, ownerOpenId: input.ownerOpenId, chatId: input.chatId },
         }],
       }] : []),
     ],
