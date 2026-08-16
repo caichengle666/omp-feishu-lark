@@ -161,6 +161,7 @@ if (!config) {
 }
 
 if (restart) {
+  if (!existsSync(workspace)) fail(`Workspace does not exist: ${workspace}`);
   mkdirSync(runtimeDir, { recursive: true });
   for (const message of cleanupLegacyInstallations({
     homeDir,
@@ -236,16 +237,16 @@ if (restart) {
   await stopExistingDaemon(lockPath);
 }
 
-replacePluginDirectory(stagingDir, pluginDir);
+const rollbackDir = replacePluginDirectory(stagingDir, pluginDir);
 removeDirectory(stagingDir);
-ok("Old plugin files replaced and temporary files removed");
+ok("Old plugin files replaced; rollback copy retained until startup passes");
 
 if (!restart) {
+  removeDirectory(rollbackDir);
   info("Files installed; daemon was not restarted (--no-restart).");
   process.exit(0);
 }
 
-if (!existsSync(workspace)) fail(`Workspace does not exist: ${workspace}`);
 mkdirSync(runtimeDir, { recursive: true });
 
 const logPath = join(runtimeDir, "daemon.log");
@@ -286,14 +287,20 @@ if (await waitForConnected(lockPath, launchToken, timeoutSeconds * 1000)) {
     ok("OMP RPC worker ready");
   } catch (error) {
     await stopExistingProcess(supervisorPidPath, supervisorStopPath);
-    fail(`Gateway connected, but conversations cannot start: ${error instanceof Error ? error.message : String(error)}`);
+    const restored = restorePluginDirectory(rollbackDir, pluginDir);
+    const recovered = restored ? await restartRestoredDaemon() : false;
+    fail(`Gateway connected, but conversations cannot start: ${error instanceof Error ? error.message : String(error)}. ${restored ? `Previous plugin restored${recovered ? " and restarted" : "; restart it manually"}.` : "No previous plugin was available for rollback."}`);
   }
+  removeDirectory(rollbackDir);
+  ok("Rollback copy removed after startup checks passed");
   console.log("\nReady. Open your Feishu bot and send a message.");
   process.exit(0);
 }
 
 await stopExistingProcess(supervisorPidPath, supervisorStopPath);
-fail(`The daemon did not connect within ${timeoutSeconds} seconds. Read the log: ${logPath}`);
+const restored = restorePluginDirectory(rollbackDir, pluginDir);
+const recovered = restored ? await restartRestoredDaemon() : false;
+fail(`The daemon did not connect within ${timeoutSeconds} seconds. Read the log: ${logPath}. ${restored ? `Previous plugin restored${recovered ? " and restarted" : "; restart it manually"}.` : "No previous plugin was available for rollback."}`);
 
 function parsePositiveInt(value: string | undefined, fallback: number) {
   const parsed = Number.parseInt(value || "", 10);
@@ -343,13 +350,27 @@ function replacePluginDirectory(staging: string, target: string) {
   try {
     if (existsSync(target)) renameSync(target, backup);
     renameSync(staging, target);
-    removeDirectory(backup);
+    return backup;
   } catch (error) {
     try {
       if (!existsSync(target) && existsSync(backup)) renameSync(backup, target);
     } catch {}
     removeDirectory(staging);
     throw new Error(`Could not replace plugin directory: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+function restorePluginDirectory(backup: string, target: string) {
+  if (!existsSync(backup)) return false;
+  const failed = `${target}.failed-${process.pid}-${Date.now()}`;
+  try {
+    if (existsSync(target)) renameSync(target, failed);
+    renameSync(backup, target);
+    removeDirectory(failed);
+    ok("New plugin failed startup; previous plugin files restored");
+    return true;
+  } catch (error) {
+    fail(`Plugin rollback failed. Previous files remain at ${backup}: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
@@ -468,4 +489,39 @@ async function waitForConnected(path: string, launchToken: string, timeoutMs: nu
     try { watcher = watch(dirname(path), () => check()); } catch {}
     check();
   });
+}
+
+async function restartRestoredDaemon() {
+  try {
+    const restoredManifest = JSON.parse(readFileSync(join(pluginDir, "package.json"), "utf8")) as { version?: string };
+    const launchToken = `${process.pid}-rollback-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const daemonArgs = ["--mode", "rpc", "--no-extensions", "--no-skills", "--allow-home", "--cwd", workspace, "-e", join(pluginDir, "extension", "index.ts")];
+    const daemonLaunchArgs = compatibleOmpCli ? [compatibleOmpCli, ...daemonArgs] : [ompBin, ...daemonArgs];
+    const launched = spawn(bunBin, [
+      join(pluginDir, "support", "feishu-supervisor.mjs"),
+      "--cwd", workspace,
+      "--log", join(runtimeDir, "daemon.log"),
+      "--pid", supervisorPidPath,
+      "--stop", supervisorStopPath,
+      "--",
+      bunBin,
+      ...daemonLaunchArgs,
+    ], {
+      cwd: workspace,
+      detached: true,
+      env: {
+        ...process.env,
+        ...(rpcOmpCli ? { OMP_CLI_PATH: rpcOmpCli } : {}),
+        ...(process.env.PI_CODING_AGENT_DIR || process.env.OMP_AGENT_DIR ? { PI_CODING_AGENT_DIR: agentDir } : {}),
+        FEISHU_PLUGIN_VERSION: restoredManifest.version || "unknown",
+        FEISHU_LAUNCH_TOKEN: launchToken,
+      },
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    launched.unref();
+    return await waitForConnected(lockPath, launchToken, timeoutSeconds * 1000);
+  } catch {
+    return false;
+  }
 }

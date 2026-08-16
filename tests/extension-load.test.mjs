@@ -66,7 +66,14 @@ test("stages and atomically replaces the plugin directory during upgrades", () =
   const installerSource = readFileSync(join(repoRoot, "src", "cli.ts"), "utf8");
   assert.match(installerSource, /\.feishu-install-/);
   assert.match(installerSource, /replacePluginDirectory\(stagingDir, pluginDir\)/);
-  assert.match(installerSource, /removeDirectory\(backup\)/);
+  assert.match(installerSource, /rollback copy retained until startup passes/);
+  assert.match(installerSource, /restorePluginDirectory\(rollbackDir, pluginDir\)/);
+  assert.match(installerSource, /const restored = restorePluginDirectory\(rollbackDir, pluginDir\)/);
+  assert.match(installerSource, /restored \? await restartRestoredDaemon\(\) : false/);
+  assert.match(installerSource, /No previous plugin was available for rollback/);
+  assert.match(installerSource, /removeDirectory\(rollbackDir\);[\s\S]*Rollback copy removed after startup checks passed/);
+  assert.match(installerSource, /restartRestoredDaemon\(\)/);
+  assert.match(installerSource, /if \(restart\) \{[\s\S]*existsSync\(workspace\)/);
   assert.match(installerSource, /--no-save/);
 });
 
@@ -94,6 +101,8 @@ test("upgrade pins the package version and runs the installer asynchronously", (
   assert.doesNotMatch(source, /spawnSync\(spec\.bunBin, args/);
   assert.match(source, /OMP_FEISHU_UPGRADE_TIMEOUT_SEC/);
   assert.match(source, /registry\.npmjs\.org/);
+  assert.match(source, /registryNetworkAttempts\(networkPolicy\)/);
+  assert.match(source, /\.\.\.attemptArgs, "-e", queryScript/);
   assert.match(source, /terminateProcessTree\(child\.pid\)/);
   assert.match(source, /if \(upgradeInFlight\) return "已有升级任务正在执行/);
   assert.match(source, /targets: \[targetForNotice\]/);
