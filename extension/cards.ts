@@ -23,7 +23,7 @@ export type ResumeSessionPage = {
   items: ResumeSessionItem[];
 };
 
-export function buildModelCard(key: string, models: any[], currentModel: any) {
+export function buildModelCard(key: string, models: any[], currentModel: any, ownerOpenId?: string, chatId?: string) {
   const current = modelLabel(currentModel);
   const elements: any[] = [
     {
@@ -54,6 +54,8 @@ export function buildModelCard(key: string, models: any[], currentModel: any) {
             key,
             provider: model.provider,
             modelId: model.id,
+            ownerOpenId,
+            chatId,
           },
         };
       }),
@@ -70,8 +72,8 @@ export function buildModelCard(key: string, models: any[], currentModel: any) {
   };
 }
 
-export function buildResumeCard(data: ResumeSessionPage) {
-  const scopeLabel = data.scope === "current" ? "当前项目" : "全部会话";
+export function buildResumeCard(data: ResumeSessionPage, ownerOpenId?: string, chatId?: string) {
+  const scopeLabel = "当前飞书会话";
   const elements: any[] = [
     {
       tag: "markdown",
@@ -84,14 +86,6 @@ export function buildResumeCard(data: ResumeSessionPage) {
       ].join("\n"),
     },
   ];
-
-  elements.push({
-    tag: "action",
-    actions: [
-      buildResumeScopeButton(data.key, "current", data.scope === "current"),
-      buildResumeScopeButton(data.key, "all", data.scope === "all"),
-    ],
-  });
 
   for (const item of data.items) {
     const lines = [
@@ -116,9 +110,11 @@ export function buildResumeCard(data: ResumeSessionPage) {
         value: {
           action: "pi_feishu_resume_select",
           key: data.key,
-          scope: data.scope,
-          page: data.page,
-          sessionPath: item.path,
+            scope: data.scope,
+            page: data.page,
+            sessionPath: item.path,
+            ownerOpenId,
+            chatId,
         },
       }],
     });
@@ -137,6 +133,8 @@ export function buildResumeCard(data: ResumeSessionPage) {
           key: data.key,
           scope: data.scope,
           page: Math.max(0, data.page - 1),
+          ownerOpenId,
+          chatId,
         },
       },
       {
@@ -149,6 +147,8 @@ export function buildResumeCard(data: ResumeSessionPage) {
           key: data.key,
           scope: data.scope,
           page: Math.min(Math.max(0, data.totalPages - 1), data.page + 1),
+          ownerOpenId,
+          chatId,
         },
       },
     ],
@@ -164,25 +164,37 @@ export function buildResumeCard(data: ResumeSessionPage) {
   };
 }
 
-export function parseModelActionValue(value: unknown): { key: string; provider: string; modelId: string } | undefined {
+export function parseModelActionValue(value: unknown): { key: string; provider: string; modelId: string; ownerOpenId?: string; chatId?: string } | undefined {
   if (!value || typeof value !== "object") return undefined;
   const raw = value as any;
   if (raw.action !== "pi_feishu_select_model") return undefined;
   if (typeof raw.key !== "string" || typeof raw.provider !== "string" || typeof raw.modelId !== "string") return undefined;
-  return { key: raw.key, provider: raw.provider, modelId: raw.modelId };
+  return {
+    key: raw.key,
+    provider: raw.provider,
+    modelId: raw.modelId,
+    ownerOpenId: typeof raw.ownerOpenId === "string" ? raw.ownerOpenId : undefined,
+    chatId: typeof raw.chatId === "string" ? raw.chatId : undefined,
+  };
 }
 
-export function parseResumePageActionValue(value: unknown): { key: string; scope: ResumeScope; page: number } | undefined {
+export function parseResumePageActionValue(value: unknown): { key: string; scope: ResumeScope; page: number; ownerOpenId?: string; chatId?: string } | undefined {
   if (!value || typeof value !== "object") return undefined;
   const raw = value as any;
   if (raw.action !== "pi_feishu_resume_page") return undefined;
   if (typeof raw.key !== "string") return undefined;
   if (raw.scope !== "current" && raw.scope !== "all") return undefined;
   if (typeof raw.page !== "number" || !Number.isFinite(raw.page)) return undefined;
-  return { key: raw.key, scope: raw.scope, page: Math.max(0, Math.floor(raw.page)) };
+  return {
+    key: raw.key,
+    scope: raw.scope,
+    page: Math.max(0, Math.floor(raw.page)),
+    ownerOpenId: typeof raw.ownerOpenId === "string" ? raw.ownerOpenId : undefined,
+    chatId: typeof raw.chatId === "string" ? raw.chatId : undefined,
+  };
 }
 
-export function parseResumeSelectActionValue(value: unknown): { key: string; scope: ResumeScope; page: number; sessionPath: string } | undefined {
+export function parseResumeSelectActionValue(value: unknown): { key: string; scope: ResumeScope; page: number; sessionPath: string; ownerOpenId?: string; chatId?: string } | undefined {
   if (!value || typeof value !== "object") return undefined;
   const raw = value as any;
   if (raw.action !== "pi_feishu_resume_select") return undefined;
@@ -194,24 +206,21 @@ export function parseResumeSelectActionValue(value: unknown): { key: string; sco
     scope: raw.scope,
     page: Math.max(0, Math.floor(raw.page)),
     sessionPath: raw.sessionPath,
+    ownerOpenId: typeof raw.ownerOpenId === "string" ? raw.ownerOpenId : undefined,
+    chatId: typeof raw.chatId === "string" ? raw.chatId : undefined,
   };
 }
 
-function buildResumeScopeButton(key: string, scope: ResumeScope, active: boolean) {
-  return {
-    tag: "button",
-    text: {
-      tag: "plain_text",
-      content: scope === "current" ? "当前项目" : "全部会话",
-    },
-    type: active ? "primary" : "default",
-    value: {
-      action: "pi_feishu_resume_page",
-      key,
-      scope,
-      page: 0,
-    },
-  };
+export function isAuthorizedCardAction(
+  value: { ownerOpenId?: string; chatId?: string },
+  action: { operatorOpenId: string; chatId?: string },
+) {
+  return Boolean(
+    value.ownerOpenId &&
+    value.chatId &&
+    value.ownerOpenId === action.operatorOpenId &&
+    value.chatId === action.chatId,
+  );
 }
 
 function escapeMarkdown(text: string) {

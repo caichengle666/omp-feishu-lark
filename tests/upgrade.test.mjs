@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { bunDnsArgs, compareVersions, parseVersion, registryNetworkAttempts, resolveTargetVersion, resolveUpgradeNetworkPolicy, upgradeTimeoutMs } from "../extension/upgrade.ts";
+import { bunDnsArgs, compareVersions, parseVersion, registryNetworkAttempts, resolveTargetVersion, resolveUpgradeNetworkPolicy, upgradeNetworkAttempts, upgradeTimeoutMs } from "../extension/upgrade.ts";
 
 test("parseVersion accepts x.y.z and rejects others", () => {
   assert.deepEqual(parseVersion("0.4.13"), [0, 4, 13]);
@@ -35,6 +35,11 @@ test("upgrade network policy is explicit and auto tries both address families", 
   assert.deepEqual(registryNetworkAttempts("auto"), [
     [],
     ["--dns-result-order=ipv4first"],
+    ["--dns-result-order=ipv6first"],
+  ]);
+  assert.deepEqual(upgradeNetworkAttempts("auto", ["--dns-result-order=ipv4first"]), [
+    ["--dns-result-order=ipv4first"],
+    [],
     ["--dns-result-order=ipv6first"],
   ]);
   assert.throws(() => resolveUpgradeNetworkPolicy("broken"), /只能是 auto、ipv4 或 ipv6/);

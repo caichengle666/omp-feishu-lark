@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { getAgentDir } from "@oh-my-pi/pi-coding-agent";
 import { RpcClient } from "@oh-my-pi/pi-coding-agent/modes/rpc/rpc-client";
-import { buildModelCard, buildResumeCard, parseModelActionValue, parseResumePageActionValue, parseResumeSelectActionValue } from "./cards.js";
+import { buildModelCard, buildResumeCard, isAuthorizedCardAction, parseModelActionValue, parseResumePageActionValue, parseResumeSelectActionValue } from "./cards.js";
 import { isSupervisorProcessAlive, readSupervisorRecord, recordedProcessStatus, writeStopRequest } from "../support/feishu-supervisor.mjs";
 import { BRIDGE_PATH, CONFIG_PATH, DAEMON_LOG_PATH, DEBUG_LOG_PATH, DEDUPE_PATH, ensureRoot, isFeishuAdmin, loadConfig, mask, readJson, removePath, STATE_PATH, SUPERVISOR_PID_PATH, SUPERVISOR_STOP_PATH, UPGRADE_NOTICE_PATH, writeJson } from "./config.js";
 import { debugLog, flushDebugLog } from "./debug.js";
@@ -20,7 +20,7 @@ import { acquireFileLease, acquireGatewayLock, gatewayLockPath, readGatewayOwner
 import { FeishuMessageHandler } from "./message-handler.js";
 import { runSetup, uiConfirm } from "./setup.js";
 import { buildTaskStatusCard, parseStopTaskActionValue } from "./task-status-card.js";
-import { bunDnsArgs, compareVersions, registryNetworkAttempts, resolveTargetVersion, resolveUpgradeNetworkPolicy, upgradeTimeoutMs } from "./upgrade.js";
+import { bunDnsArgs, compareVersions, registryNetworkAttempts, resolveTargetVersion, resolveUpgradeNetworkPolicy, upgradeNetworkAttempts, upgradeTimeoutMs } from "./upgrade.js";
 import { BotUnavailableError, FeishuTransport } from "./transport.js";
 import type { FeishuConfig, FeishuStatus } from "./types.js";
 
@@ -252,6 +252,10 @@ export default function feishuExtension(pi: ExtensionAPI) {
       }
       const stopTask = parseStopTaskActionValue(action.value);
       if (stopTask) {
+        if (!isAuthorizedCardAction(stopTask, action)) {
+          debugLog("feishu.card.stop_denied", { cardMessageId: action.messageId, operatorOpenId: action.operatorOpenId });
+          return;
+        }
         debugLog("feishu.card.stop_requested", {
           key: stopTask.key,
           runId: stopTask.runId,
@@ -277,29 +281,43 @@ export default function feishuExtension(pi: ExtensionAPI) {
           runId: stopTask.runId,
           status,
           phase: result.message,
+          ownerOpenId: stopTask.ownerOpenId,
+          chatId: stopTask.chatId,
         });
       }
       const resumePage = parseResumePageActionValue(action.value);
       if (resumePage) {
+        if (!isAuthorizedCardAction(resumePage, action)) {
+          debugLog("feishu.card.resume_denied", { cardMessageId: action.messageId, operatorOpenId: action.operatorOpenId });
+          return;
+        }
         const page = await conversations.listResumeSessions(resumePage.key, resumePage.scope, resumePage.page);
-        return buildResumeCard(page);
+        return buildResumeCard(page, resumePage.ownerOpenId, resumePage.chatId);
       }
       const resumeSelect = parseResumeSelectActionValue(action.value);
       if (resumeSelect) {
+        if (!isAuthorizedCardAction(resumeSelect, action)) {
+          debugLog("feishu.card.resume_denied", { cardMessageId: action.messageId, operatorOpenId: action.operatorOpenId });
+          return;
+        }
         await conversations.resumeConversation(resumeSelect.key, resumeSelect.sessionPath, async (reply) => {
           await transport?.replyText(action.messageId, reply);
         });
         const page = await conversations.listResumeSessions(resumeSelect.key, resumeSelect.scope, resumeSelect.page);
-        return buildResumeCard(page);
+        return buildResumeCard(page, resumeSelect.ownerOpenId, resumeSelect.chatId);
       }
       const selected = parseModelActionValue(action.value);
       if (!selected) return;
+      if (!isAuthorizedCardAction(selected, action)) {
+        debugLog("feishu.card.model_denied", { cardMessageId: action.messageId, operatorOpenId: action.operatorOpenId });
+        return;
+      }
       await conversations.selectModel(selected.key, selected.provider, selected.modelId, async (reply) => {
         await transport?.replyText(action.messageId, reply);
       });
       const models = await conversations.getAvailableModels();
       const currentModel = await conversations.getSelectedModel(selected.key);
-      return buildModelCard(selected.key, models, currentModel);
+      return buildModelCard(selected.key, models, currentModel, selected.ownerOpenId, selected.chatId);
     });
     try {
       await transport.start();
@@ -619,15 +637,27 @@ async function upgradeDaemon(targetVersion: string, noticeTarget?: UpgradeNotice
     const pluginDir = dirname(dirname(spec.extensionPath));
     // --no-restart：安装器只替换文件，不重启 daemon（避免 90s 超时与残留进程）。
     // 装完校验 exit 0 后再由本进程触发重启（TUI: restartDaemon；daemon 内: 退出交给 supervisor 拉起）。
-    const args = [...dnsArgs, "x", `@caichengle/omp-feishu-lark@${target}`, pluginDir, "--no-restart"];
-    const result = await runProcess(spec.bunBin, args, {
-      timeout: upgradeTimeoutMs(process.env.OMP_FEISHU_UPGRADE_TIMEOUT_SEC),
-      cwd: process.cwd(),
-      env: { ...process.env },
-    });
-    if (result.code !== 0) {
-      const detail = (result.stderr || result.stdout || "").trim().split("\n").pop() || "";
-      throw new Error(`升级安装失败（exit ${result.code ?? "unknown"}, network=${networkPolicy}）：${detail || "安装器未返回错误详情"}`);
+    let installed = false;
+    const installFailures: string[] = [];
+    for (const attemptArgs of upgradeNetworkAttempts(networkPolicy, dnsArgs)) {
+      const args = [...attemptArgs, "x", `@caichengle/omp-feishu-lark@${target}`, pluginDir, "--no-restart"];
+      try {
+        const result = await runProcess(spec.bunBin, args, {
+          timeout: upgradeTimeoutMs(process.env.OMP_FEISHU_UPGRADE_TIMEOUT_SEC),
+          cwd: process.cwd(),
+          env: { ...process.env },
+        });
+        if (result.code === 0) {
+          installed = true;
+          break;
+        }
+        installFailures.push((result.stderr || result.stdout || `exit ${result.code ?? "unknown"}`).trim().split("\n").pop() || "unknown error");
+      } catch (error) {
+        installFailures.push(error instanceof Error ? error.message : String(error));
+      }
+    }
+    if (!installed) {
+      throw new Error(`升级安装失败（network=${networkPolicy}）：${installFailures.join(" | ") || "安装器未返回错误详情"}`);
     }
     if (process.env.PI_FEISHU_DAEMON === "1") {
       // 升级前记录通知目标：找最近活跃的 p2p 会话，新 daemon 启动连上 WS 后

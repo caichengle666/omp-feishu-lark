@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, watch, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, watch, writeFileSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,7 +13,10 @@ import { bunDnsArgs, resolveUpgradeNetworkPolicy, upgradeTimeoutMs } from "../ex
 
 const isWindows = process.platform === "win32";
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const packageManifest = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8")) as { version: string };
+const packageManifest = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8")) as {
+  version: string;
+  dependencies?: Record<string, string>;
+};
 const homeDir = process.env.HOME || process.env.USERPROFILE;
 const timeoutSeconds = parsePositiveInt(process.env.OMP_FEISHU_TIMEOUT, 90);
 const networkPolicy = resolveUpgradeNetworkPolicy(process.env.OMP_FEISHU_NETWORK);
@@ -151,7 +154,7 @@ if (!config) {
   const domain = prompt("Domain (feishu/lark, default feishu): ")?.trim() || "feishu";
   if (!appId || !appSecret) fail("App ID and App Secret are required.");
   if (domain !== "feishu" && domain !== "lark") fail("Domain must be feishu or lark.");
-  config = { appId, appSecret, domain, autoStart: true, promptNotifySec: 30, promptTimeoutSec: 0, promptTimeoutEnabled: false };
+  config = { appId, appSecret, domain, groupPolicy: "mention", autoStart: true, promptNotifySec: 30, promptTimeoutSec: 0, promptTimeoutEnabled: false };
   mkdirSync(runtimeDir, { recursive: true });
   writeFileSync(configPath, JSON.stringify(config, null, 2), { mode: 0o600 });
   ok("Feishu credentials saved");
@@ -180,7 +183,7 @@ const stagingExtensionDir = join(stagingDir, "extension");
 const stagingSupportDir = join(stagingDir, "support");
 mkdirSync(stagingExtensionDir, { recursive: true });
 mkdirSync(stagingSupportDir, { recursive: true });
-const extensionFiles = ["attachments.ts", "bridge-runtime.ts", "bridge-store.ts", "card-action-webhook.ts", "cards.ts", "config.ts", "conversation-manager.ts", "debug.ts", "dedupe-store.ts", "delivery.ts", "gateway-lock.ts", "help.ts", "index.ts", "message-handler.ts", "messages.ts", "notification-webhook.ts", "prompt-timeout.ts", "rich-text.ts", "rpc-worker-pool.ts", "setup.ts", "task-status-card.ts", "tencent-asr.ts", "transport.ts", "types.ts", "upgrade.ts"];
+const extensionFiles = readdirSync(join(packageRoot, "extension")).filter((file) => file.endsWith(".ts")).sort();
 for (const file of extensionFiles) {
   writeFileSync(join(stagingExtensionDir, file), readFileSync(join(packageRoot, "extension", file)));
 }
@@ -196,10 +199,7 @@ writeFileSync(stagingPackagePath, `${JSON.stringify({
   type: "module",
   version: packageManifest.version,
   description: "@caichengle/omp-feishu-lark installed runtime",
-  dependencies: {
-    "@larksuiteoapi/node-sdk": "^1.73.0",
-    "qrcode-terminal": "^0.12.0",
-  },
+  dependencies: packageManifest.dependencies || {},
 }, null, 2)}\n`);
 const pluginPackagePath = stagingPackagePath;
 info("installing plugin runtime dependencies...");

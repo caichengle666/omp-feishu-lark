@@ -27,7 +27,7 @@ export const DEFAULT_CONFIG: Pick<
   "domain" | "groupPolicy" | "cardActionMode" | "cardActionWebhookHost" | "cardActionWebhookPort" | "cardActionWebhookPath" | "notificationWebhookEnabled" | "notificationWebhookHost" | "notificationWebhookPort" | "notificationWebhookPath" | "language" | "reactEmoji" | "autoStart" | "promptNotifySec" | "promptTimeoutSec" | "promptTimeoutEnabled"
 > = {
   domain: "feishu",
-  groupPolicy: "open",
+  groupPolicy: "mention",
   cardActionMode: "ws",
   cardActionWebhookHost: "0.0.0.0",
   cardActionWebhookPort: 3001,

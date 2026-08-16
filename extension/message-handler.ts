@@ -112,7 +112,14 @@ export class FeishuMessageHandler {
       }
 
       const prompt = buildPrompt(msg, promptText, fileSections, imageInputs, skippedImageCount, modelSupportsImage, downloadErrors);
-      const status = new TaskStatusCard(key, msg.messageId, transport, this.conversations.getWorkspace(key));
+      const status = new TaskStatusCard(
+        key,
+        msg.messageId,
+        transport,
+        this.conversations.getWorkspace(key),
+        msg.senderOpenId,
+        msg.chatId,
+      );
       await status.start();
       const modelStartedAt = Date.now();
       await this.conversations.promptWithImages(key, prompt, imageInputs, async (reply) => {
@@ -153,14 +160,18 @@ export class FeishuMessageHandler {
         return true;
       }
       const currentModel = await this.conversations.getSelectedModel(key);
-      await transport.replyCard(msg.messageId, buildModelCard(key, models, currentModel));
+      await transport.replyCard(msg.messageId, buildModelCard(key, models, currentModel, msg.senderOpenId, msg.chatId));
       debugLog("feishu.command.model.replied", { messageId: msg.messageId, key });
       return true;
     }
 
     if (command.name === "resume") {
+      if (msg.chatType === "group" && !this.diagnostics?.isAdmin?.(msg.senderOpenId)) {
+        await transport.replyText(msg.messageId, "群聊恢复历史会话需要管理员权限。");
+        return true;
+      }
       const page = await this.conversations.listResumeSessions(key, "current", 0);
-      await transport.replyCard(msg.messageId, buildResumeCard(page));
+      await transport.replyCard(msg.messageId, buildResumeCard(page, msg.senderOpenId, msg.chatId));
       return true;
     }
 

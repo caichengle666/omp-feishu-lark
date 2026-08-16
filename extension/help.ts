@@ -18,7 +18,7 @@ export function feishuHelpText() {
     "/feishu debug - 查看最近的调试日志（管理员）",
     "/feishu refresh - 刷新 OMP 模型列表（管理员）",
     "/new - 新建当前飞书会话",
-    "/resume - 恢复当前聊天的历史会话",
+    "/resume - 恢复当前飞书会话保存过的历史会话（群聊需管理员）",
     "/model - 选择当前聊天使用的模型",
     "/stop - 停止当前聊天正在执行的任务",
     "/workspace PATH - 切换当前聊天的工作目录（群聊需管理员）",

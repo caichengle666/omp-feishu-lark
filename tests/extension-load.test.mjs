@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -77,6 +77,22 @@ test("stages and atomically replaces the plugin directory during upgrades", () =
   assert.match(installerSource, /--no-save/);
 });
 
+test("installer stages every extension TypeScript source file", () => {
+  const extensionDir = join(repoRoot, "extension");
+  const files = readdirSync(extensionDir).filter((file) => file.endsWith(".ts")).sort();
+  const installerSource = readFileSync(join(repoRoot, "src", "cli.ts"), "utf8");
+  assert.ok(files.includes("artifacts.ts"));
+  assert.match(installerSource, /readdirSync\(join\(packageRoot, "extension"\)\)/);
+  assert.match(installerSource, /file\.endsWith\("\.ts"\)/);
+  assert.doesNotMatch(installerSource, /const extensionFiles = \[/);
+});
+
+test("installer derives runtime dependencies from the published package manifest", () => {
+  const installerSource = readFileSync(join(repoRoot, "src", "cli.ts"), "utf8");
+  assert.match(installerSource, /dependencies: packageManifest\.dependencies \|\| \{\}/);
+  assert.doesNotMatch(installerSource, /"qrcode-terminal": "\^0\.12\.0"/);
+});
+
 test("upgrade prepares the new version before stopping the running daemon/supervisor", () => {
   const installerSource = readFileSync(join(repoRoot, "src", "cli.ts"), "utf8");
   const compileOk = installerSource.indexOf("ok(\"Plugin compile check passed\");");
@@ -96,12 +112,14 @@ test("upgrade pins the package version and runs the installer asynchronously", (
   const source = readFileSync(extensionPath, "utf8");
   assert.match(source, /`@caichengle\/omp-feishu-lark@\$\{target\}`/);
   assert.match(source, /const pluginDir = dirname\(dirname\(spec\.extensionPath\)\);/);
-  assert.match(source, /const args = \[\.\.\.dnsArgs, "x", `@caichengle\/omp-feishu-lark@\$\{target\}`, pluginDir, "--no-restart"\];/);
+  assert.match(source, /for \(const attemptArgs of upgradeNetworkAttempts\(networkPolicy, dnsArgs\)\)/);
+  assert.match(source, /const args = \[\.\.\.attemptArgs, "x", `@caichengle\/omp-feishu-lark@\$\{target\}`, pluginDir, "--no-restart"\];/);
   assert.match(source, /await runProcess\(spec\.bunBin, args/);
   assert.doesNotMatch(source, /spawnSync\(spec\.bunBin, args/);
   assert.match(source, /OMP_FEISHU_UPGRADE_TIMEOUT_SEC/);
   assert.match(source, /registry\.npmjs\.org/);
   assert.match(source, /registryNetworkAttempts\(networkPolicy\)/);
+  assert.match(source, /upgradeNetworkAttempts\(networkPolicy, dnsArgs\)/);
   assert.match(source, /\.\.\.attemptArgs, "-e", queryScript/);
   assert.match(source, /terminateProcessTree\(child\.pid\)/);
   assert.match(source, /if \(upgradeInFlight\) return "已有升级任务正在执行/);
@@ -123,6 +141,7 @@ test("new installer configurations disable the hard prompt timeout", () => {
   const installerSource = readFileSync(join(repoRoot, "src", "cli.ts"), "utf8");
   assert.match(installerSource, /promptTimeoutSec: 0/);
   assert.doesNotMatch(installerSource, /promptTimeoutSec: 120/);
+  assert.match(installerSource, /groupPolicy: "mention"/);
 });
 
 test("Feishu-facing extension text consistently uses the OMP brand", () => {
@@ -239,8 +258,11 @@ test("installs and manages the proactive notification webhook", () => {
   assert.match(source, /new FeishuNotificationWebhook\(cfg, bridgeStore, delivery\)/);
   assert.match(source, /await notificationWebhook\.start\(\)/);
   assert.match(source, /await notificationWebhook\?\.stop\(\)/);
-  assert.match(installerSource, /"notification-webhook\.ts"/);
-  assert.match(installerSource, /"help\.ts"/);
+  const installedExtensionFiles = readdirSync(join(repoRoot, "extension")).filter((file) => file.endsWith(".ts"));
+  assert.ok(installedExtensionFiles.includes("notification-webhook.ts"));
+  assert.ok(installedExtensionFiles.includes("help.ts"));
+  assert.match(installerSource, /const extensionFiles = readdirSync/);
+  assert.match(installerSource, /file\.endsWith\("\.ts"\)/);
 });
 
 test("notifies an interactive OMP session when gateway ownership is lost", () => {

@@ -19,6 +19,16 @@ export function registryNetworkAttempts(policy: UpgradeNetworkPolicy): string[][
   return [[], bunDnsArgs("ipv4"), bunDnsArgs("ipv6")];
 }
 
+export function upgradeNetworkAttempts(policy: UpgradeNetworkPolicy, preferred: string[] = []): string[][] {
+  const seen = new Set<string>();
+  return [preferred, ...registryNetworkAttempts(policy)].filter((args) => {
+    const key = args.join("\u0000");
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 export function upgradeTimeoutMs(value: string | undefined): number {
   const seconds = Number.parseInt(value || "", 10);
   return (Number.isFinite(seconds) && seconds > 0 ? seconds : 600) * 1000;

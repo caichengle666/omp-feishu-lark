@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { test } from "bun:test";
@@ -74,6 +74,26 @@ test("collectSendableArtifacts accepts generated workspace files and skips code,
       toolName: "write",
       isError: false,
       result: { details: { resolvedPath: join(workspace, "missing.pdf") } },
+    }, workspace), []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("collectSendableArtifacts rejects a workspace symlink that resolves outside the workspace", () => {
+  const root = tempRoot();
+  try {
+    const workspace = join(root, "workspace");
+    const secret = join(root, "secret.pdf");
+    const linked = join(workspace, "linked.pdf");
+    writeFileSync(secret, "private");
+    symlinkSync(secret, linked);
+
+    assert.deepEqual(collectSendableArtifacts({
+      type: "tool_execution_end",
+      toolName: "write",
+      isError: false,
+      result: { details: { resolvedPath: linked } },
     }, workspace), []);
   } finally {
     rmSync(root, { recursive: true, force: true });

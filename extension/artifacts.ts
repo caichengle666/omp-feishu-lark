@@ -1,4 +1,5 @@
-import { realpathSync, statSync } from "node:fs";
+import { lstatSync, realpathSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { extname, isAbsolute, relative, resolve, sep } from "node:path";
 
 const GENERATED_IMAGE_TOOLS = new Set(["generate_image", "image_generation", "image_gen", "imagegen"]);
@@ -56,14 +57,22 @@ export function collectArtifactCandidates(event: unknown, workspaceRoot?: string
 }
 
 export function collectSendableArtifacts(event: unknown, workspaceRoot?: string): string[] {
-  return collectArtifactCandidates(event, workspaceRoot).filter(isExistingSendableArtifact);
+  return collectArtifactCandidates(event, workspaceRoot).filter((path) => isExistingSendableArtifact(path, workspaceRoot));
 }
 
-export function isExistingSendableArtifact(filePath: string): boolean {
+export function isExistingSendableArtifact(filePath: string, workspaceRoot?: string): boolean {
   try {
+    if (lstatSync(filePath).isSymbolicLink()) return false;
     const stat = statSync(filePath);
     if (!stat.isFile() || stat.size <= 0) return false;
-    realpathSync(filePath);
+    const resolvedFile = realpathSync(filePath);
+    if (workspaceRoot) {
+      const resolvedWorkspace = realpathSync(workspaceRoot);
+      const requestedFile = resolve(filePath);
+      const requestedInsideWorkspace = isPathInside(resolve(workspaceRoot), requestedFile);
+      if (requestedInsideWorkspace && !isPathInside(resolvedWorkspace, resolvedFile)) return false;
+      if (!requestedInsideWorkspace && !isPathInside(realpathSync(tmpdir()), resolvedFile)) return false;
+    }
     return true;
   } catch {
     return false;

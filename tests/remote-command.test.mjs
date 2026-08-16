@@ -105,3 +105,19 @@ test("group workspace changes require an administrator", async () => {
   assert.match(replies[0], /群聊切换工作区需要管理员权限/);
   assert.match(replies[0], /ou_user/);
 });
+
+test("group resume requires an administrator", async () => {
+  const replies = [];
+  let listed = false;
+  const transport = { replyText: async (_messageId, text) => { replies.push(text); } };
+  const groupMessage = { ...message, chatType: "group" };
+  const handler = new FeishuMessageHandler({
+    listResumeSessions: async () => { listed = true; return {}; },
+  }, () => transport, undefined, {
+    isAdmin: () => false,
+  });
+
+  assert.equal(await handler.handleCommand(groupMessage, "group:oc_chat", "/resume"), true);
+  assert.equal(listed, false);
+  assert.match(replies[0], /群聊恢复历史会话需要管理员权限/);
+});

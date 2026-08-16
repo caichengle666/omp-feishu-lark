@@ -39,6 +39,8 @@ export type ModelSelection = {
 
 export type FeishuState = {
   sessions: Record<string, string>;
+  /** Session files created or explicitly selected by each Feishu conversation. */
+  history?: Record<string, string[]>;
   models?: Record<string, ModelSelection>;
   workspaces?: Record<string, string>;
 };

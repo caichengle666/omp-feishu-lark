@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { AgentSession, SessionInfo } from "@oh-my-pi/pi-coding-agent";
 import {
   createAgentSession,
@@ -61,6 +61,7 @@ export class ConversationManager {
     ensureRoot();
     this.state = readJson<FeishuState>(STATE_PATH, { sessions: {} });
     this.state.sessions ||= {};
+    this.state.history ||= {};
     this.state.models ||= {};
     this.state.workspaces ||= {};
     this.loadSettingsDefault();
@@ -182,6 +183,7 @@ export class ConversationManager {
       }
       this.sessions.delete(key);
       await this.rpcWorkers?.reset(key);
+      this.rememberSession(key, this.state.sessions[key]);
       delete this.state.sessions[key];
       writeJson(STATE_PATH, this.state);
       await onReply("已创建新会话。旧会话历史已保留，下一条消息会从新上下文开始。");
@@ -192,8 +194,8 @@ export class ConversationManager {
     await next;
   }
 
-  async listResumeSessions(key: string, scope: ResumeScope, page: number): Promise<ResumeSessionPage> {
-    const sessions = await this.getResumeSessions(key, scope);
+  async listResumeSessions(key: string, _scope: ResumeScope, page: number): Promise<ResumeSessionPage> {
+    const sessions = await this.getResumeSessions(key);
     const normalizedPage = Math.max(0, Math.floor(page));
     const total = sessions.length;
     const totalPages = Math.max(1, Math.ceil(total / RESUME_PAGE_SIZE));
@@ -209,14 +211,14 @@ export class ConversationManager {
           ? summarizeFirstMessage(session.firstMessage)
           : `消息数：${session.messageCount}`,
         modifiedLabel: formatModifiedLabel(session.modified),
-        workspaceLabel: scope === "all" ? formatWorkspaceLabel(session.cwd) : undefined,
+        workspaceLabel: undefined,
         isCurrent: Boolean(currentSessionPath && sessionPath && currentSessionPath === sessionPath),
       };
     });
 
     return {
       key,
-      scope,
+      scope: "current",
       page: clampedPage,
       total,
       totalPages,
@@ -233,6 +235,10 @@ export class ConversationManager {
     const previous = this.previousTurn(key);
     const next = previous.then(async () => {
       const sessionPath = this.normalizeExistingSessionPath(sessionPathInput);
+      if (!this.isOwnedSession(key, sessionPath)) {
+        await onReply("这条历史会话不属于当前飞书会话。请重新打开 /resume 选择。");
+        return;
+      }
       const sessionInfo = await this.findSessionInfo(sessionPath);
       if (!sessionInfo) {
         await onReply("这条历史会话不存在，可能已经被删除。请重新打开 /resume 选择。");
@@ -254,7 +260,7 @@ export class ConversationManager {
 
       this.sessions.delete(key);
       await this.rpcWorkers?.reset(key);
-      this.state.sessions[key] = sessionPath;
+      this.setCurrentSession(key, sessionPath);
       this.state.workspaces![key] = sessionInfo.cwd || this.cwd;
       writeJson(STATE_PATH, this.state);
       await onReply([
@@ -323,6 +329,7 @@ export class ConversationManager {
       }
       this.sessions.delete(key);
       await this.rpcWorkers?.reset(key);
+      this.rememberSession(key, this.state.sessions[key]);
       delete this.state.sessions[key];
       this.state.workspaces![key] = workspace;
       writeJson(STATE_PATH, this.state);
@@ -403,7 +410,7 @@ export class ConversationManager {
     }
     this.sessions.clear();
     this.queues.clear();
-    this.state = { sessions: {}, models: {}, workspaces: {} };
+    this.state = { sessions: {}, history: {}, models: {}, workspaces: {} };
   }
 
   private getSession(key: string): Promise<AgentSession> {
@@ -504,7 +511,7 @@ export class ConversationManager {
       }
     });
     if (session.sessionFile && this.state.sessions[key] !== session.sessionFile) {
-      this.state.sessions[key] = session.sessionFile;
+      this.setCurrentSession(key, session.sessionFile);
       writeJson(STATE_PATH, this.state);
     }
     return session;
@@ -546,7 +553,7 @@ export class ConversationManager {
       if (this.activeRuns.get(key) === run) this.activeRuns.delete(key);
       if (run.stopped) return;
       if (result.sessionFile && this.state.sessions[key] !== result.sessionFile) {
-        this.state.sessions[key] = result.sessionFile;
+        this.setCurrentSession(key, result.sessionFile);
         writeJson(STATE_PATH, this.state);
       }
       const answer = result.text;
@@ -577,11 +584,44 @@ export class ConversationManager {
     await next;
   }
 
-  private async getResumeSessions(key: string, scope: ResumeScope) {
-    const base = scope === "all"
-      ? await SessionManager.listAll()
-      : await SessionManager.list(this.getWorkspace(key));
-    return [...base].sort((a, b) => toTimeMs(b.modified) - toTimeMs(a.modified));
+  private async getResumeSessions(key: string) {
+    const allowed = new Set(
+      [this.state.sessions[key], ...(this.state.history?.[key] || [])]
+        .map((path) => this.normalizeSessionPath(path))
+        .filter((path): path is string => Boolean(path)),
+    );
+    if (!allowed.size) return [];
+    const base = await SessionManager.listAll();
+    return base
+      .filter((session) => {
+        const path = this.normalizeSessionPath(session.path);
+        return Boolean(path && allowed.has(path));
+      })
+      .sort((a, b) => toTimeMs(b.modified) - toTimeMs(a.modified));
+  }
+
+  private isOwnedSession(key: string, sessionPath: string) {
+    const normalized = this.normalizeSessionPath(sessionPath);
+    if (!normalized) return false;
+    return [this.state.sessions[key], ...(this.state.history?.[key] || [])]
+      .map((path) => this.normalizeSessionPath(path))
+      .some((path) => path === normalized);
+  }
+
+  private setCurrentSession(key: string, sessionPath: string) {
+    this.rememberSession(key, this.state.sessions[key]);
+    this.state.sessions[key] = sessionPath;
+    this.rememberSession(key, sessionPath);
+  }
+
+  private rememberSession(key: string, sessionPath: string | undefined) {
+    const normalized = this.normalizeSessionPath(sessionPath);
+    if (!normalized) return;
+    const previous = this.state.history?.[key] || [];
+    this.state.history![key] = [
+      normalized,
+      ...previous.filter((path) => this.normalizeSessionPath(path) !== normalized),
+    ].slice(0, 50);
   }
 
   private async findSessionInfo(sessionPath: string): Promise<SessionInfo | undefined> {
@@ -738,11 +778,6 @@ function formatModifiedLabel(value: Date | string) {
   const hh = String(date.getHours()).padStart(2, "0");
   const min = String(date.getMinutes()).padStart(2, "0");
   return `${yyyy}-${mm}-${dd} ${hh}:${min}`;
-}
-
-function formatWorkspaceLabel(cwd: string) {
-  if (!cwd) return "(unknown)";
-  return `${basename(cwd)} · ${cwd}`;
 }
 
 function toTimeMs(value: Date | string) {

@@ -76,7 +76,7 @@ export async function runSetup(ctx: ExtensionCommandContext) {
       { value: "open", label: "open：不需要 @，群/话题消息自动回复 / auto reply without @ in groups/topics" },
       { value: "mention", label: "mention：只有 @ 机器人才回复 / reply only when mentioned" },
     ],
-    "open",
+    "mention",
   );
 
   const config: FeishuConfig = {

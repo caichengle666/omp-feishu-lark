@@ -119,7 +119,7 @@ so the installer asks for them when they are missing:
 | App ID | from 开放平台 > 你的应用 > 凭证与基础信息 |
 | App Secret | not echoed |
 | domain | `feishu` or `lark`, default `feishu` |
-| group policy | `open` or `mention`, default `open` |
+| group policy | `open` or `mention`, default `mention` |
 
 Credentials are checked against
 `/open-apis/auth/v3/tenant_access_token/internal` before anything is written; a
@@ -181,6 +181,13 @@ When an OMP task succeeds, generated images, documents, and audio files are
 automatically sent back to the current Feishu conversation. `/send PATH` remains
 available as a manual fallback. Group chats require an administrator for manual
 sends.
+
+New installations reply in groups only when the bot is mentioned. Choose
+`open` only for a trusted group: group messages can invoke OMP tools in the
+configured workspace.
+
+`/resume` only lists session files previously created or selected by the current
+Feishu conversation. Action cards are bound to the user and chat that opened them.
 
 Remote administrative commands such as `/feishu upgrade` are denied by
 default. Add the administrator's Feishu Open ID to `adminOpenIds` in
