@@ -6,6 +6,7 @@ export function feishuHelpText() {
     "/feishu start - 启动飞书连接",
     "/feishu stop - 停止飞书连接",
     "/feishu restart - 重启连接并加载最新代码和配置",
+    "/feishu upgrade - 升级插件到最新版（可指定版本：/feishu upgrade 0.4.14）",
     "/feishu refresh - 刷新 OMP 模型列表",
     "/feishu status - 查看连接状态和运行位置",
     "/feishu doctor - 检查配置、OMP、模型和 daemon",

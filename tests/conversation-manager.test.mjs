@@ -7,7 +7,7 @@ import { join } from "node:path";
 const testRoot = join(tmpdir(), `omp-feishu-conversation-tests-${process.pid}`);
 mkdirSync(testRoot, { recursive: true });
 process.env.OMP_AGENT_DIR = testRoot;
-const { ConversationManager } = await import("../extension/conversation-manager.ts");
+const { ConversationManager, formatUserFacingError } = await import("../extension/conversation-manager.ts");
 
 function managerWithRun(run) {
   const manager = new ConversationManager(process.cwd());
@@ -27,6 +27,21 @@ test("stopConversation reports when no run is active", async () => {
   assert.deepEqual(replies, ["当前没有进行中的处理。"]);
 });
 
+test("legacy timeout seconds remain disabled unless the hard timeout is explicitly enabled", () => {
+  const legacy = new ConversationManager(process.cwd(), undefined, { promptTimeoutSec: 300 });
+  const enabled = new ConversationManager(process.cwd(), undefined, { promptTimeoutSec: 300, promptTimeoutEnabled: true });
+  assert.equal(legacy.hardTimeoutMs(), 0);
+  assert.equal(enabled.hardTimeoutMs(), 300_000);
+});
+
+test("provider and RPC failures are classified for Feishu users", () => {
+  assert.match(formatUserFacingError("HTTP 400 invalid reasoning_content payload"), /模型服务错误（HTTP 400）/);
+  assert.match(formatUserFacingError("upstream returned 524"), /上游模型服务超时（HTTP 524）/);
+  assert.match(formatUserFacingError("Timeout collecting events. Stderr:"), /OMP 等待模型事件超时/);
+  assert.match(formatUserFacingError("HTTP 503 unavailable"), /模型服务错误（HTTP 503）/);
+  assert.equal(formatUserFacingError("session crashed"), "OMP error: session crashed");
+});
+
 test("stopConversation rejects a stale task card", async () => {
   const manager = managerWithRun({ runId: "current", stopped: false, session: {} });
   const replies = [];
@@ -39,17 +54,19 @@ test("stopConversation rejects a stale task card", async () => {
 test("stopConversation aborts the active session and stops its status card", async () => {
   let aborted = 0;
   let stopped = 0;
+  const order = [];
   const manager = managerWithRun({
     runId: "current",
     stopped: false,
-    session: { abort: async () => { aborted += 1; } },
-    status: { stopImmediately: async () => { stopped += 1; } },
+    session: { abort: async () => { aborted += 1; order.push("abort"); } },
+    status: { stopImmediately: async () => { stopped += 1; order.push("card"); } },
   });
   const replies = [];
   const result = await manager.stopConversation("chat", async (text) => replies.push(text), "current");
   assert.deepEqual(result, { status: "stopped", message: "已停止当前处理。" });
   assert.equal(aborted, 1);
   assert.equal(stopped, 1);
+  assert.deepEqual(order, ["abort", "card"]);
   assert.deepEqual(replies, ["已停止当前处理。"]);
 });
 

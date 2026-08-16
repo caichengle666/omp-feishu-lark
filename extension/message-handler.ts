@@ -21,7 +21,12 @@ export class FeishuMessageHandler {
     private readonly conversations: ConversationManager,
     private readonly getTransport: () => FeishuTransport | undefined,
     private readonly bridgeStore?: FeishuBridgeStore,
-    private readonly diagnostics?: { doctor: () => string | Promise<string>; version: () => string },
+    private readonly diagnostics?: {
+      doctor: () => string | Promise<string>;
+      version: () => string;
+      upgrade?: (version?: string, target?: { chatId: string; messageId: string; sessionKey: string; chatType: string }) => Promise<string>;
+      isAdmin?: (openId: string) => boolean;
+    },
   ) {}
 
   reset() {
@@ -171,7 +176,24 @@ export class FeishuMessageHandler {
       const text = command.name === "doctor"
         ? await this.diagnostics?.doctor()
         : this.diagnostics?.version();
-      await transport.replyText(msg.messageId, text || "诊断功能尚未准备好，请在 OMP 中运行 /feishu doctor 或 /feishu version。\nDiagnostics are not ready; run the OMP command directly.");
+      await transport.replyText(msg.messageId, text || "诊断功能尚未准备好，请在 OMP 中运行 /feishu doctor 或 /feishu version。");
+      return true;
+    }
+
+    if (command.name === "upgrade") {
+      if (!this.diagnostics?.isAdmin?.(msg.senderOpenId)) {
+        await transport.replyText(msg.messageId, `无权执行远程升级。请在 OMP 中运行 /feishu upgrade，或将你的 Open ID 加入 adminOpenIds：${msg.senderOpenId}`);
+        return true;
+      }
+      // 先回执，再触发升级：daemon 内升级会重启进程，入口回复必须先发出。
+      await transport.replyText(msg.messageId, "收到，正在检查并升级插件…升级成功后服务会自动重启恢复。");
+      const report = await this.diagnostics?.upgrade?.(command.version, {
+        chatId: msg.chatId,
+        messageId: msg.messageId,
+        sessionKey: key,
+        chatType: msg.chatType,
+      });
+      if (report) await transport.replyText(msg.messageId, report);
       return true;
     }
 

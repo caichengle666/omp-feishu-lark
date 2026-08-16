@@ -81,6 +81,46 @@ test("upgrade prepares the new version before stopping the running daemon/superv
   assert.match(installerSource, /acquireInstallerLease\(installLockPath\)/);
   assert.match(installerSource, /removeGatewayLockKey\(locks\)/);
   assert.doesNotMatch(installerSource, /rmSync\(path, \{ force: true, maxRetries: 3, retryDelay: 200 \}\)/);
+  assert.match(installerSource, /recordedProcessStatus\(owner\)/);
+  assert.match(installerSource, /Refusing to stop PID/);
+});
+
+test("upgrade pins the package version and runs the installer asynchronously", () => {
+  const source = readFileSync(extensionPath, "utf8");
+  assert.match(source, /`@caichengle\/omp-feishu-lark@\$\{target\}`/);
+  assert.match(source, /const pluginDir = dirname\(dirname\(spec\.extensionPath\)\);/);
+  assert.match(source, /const args = \[\.\.\.dnsArgs, "x", `@caichengle\/omp-feishu-lark@\$\{target\}`, pluginDir, "--no-restart"\];/);
+  assert.match(source, /await runProcess\(spec\.bunBin, args/);
+  assert.doesNotMatch(source, /spawnSync\(spec\.bunBin, args/);
+  assert.match(source, /OMP_FEISHU_UPGRADE_TIMEOUT_SEC/);
+  assert.match(source, /registryNetworkAttempts\(networkPolicy\)/);
+  assert.match(source, /terminateProcessTree\(child\.pid\)/);
+  assert.match(source, /if \(upgradeInFlight\) return "已有升级任务正在执行/);
+  assert.match(source, /targets: \[targetForNotice\]/);
+  assert.match(source, /if \(target\.messageId\) await transport\.replyText/);
+  assert.match(source, /healthy = reportedVersion === notice\.to && packageVersion === notice\.to/);
+  assert.match(source, /if \(failed\.length\) writeJson\(UPGRADE_NOTICE_PATH/);
+});
+
+test("daemon takeover waits for the old owner without force-overwriting a live lock", () => {
+  const source = readFileSync(extensionPath, "utf8");
+  assert.match(source, /waitForTakeover\(start, 300_000\)/);
+  assert.match(source, /start\(undefined, \{ takeover: false \}\)/);
+  assert.match(source, /result === "started" \|\| result === "already"/);
+  assert.doesNotMatch(source, /start\(undefined, \{ takeover: true \}\)/);
+});
+
+test("new installer configurations disable the hard prompt timeout", () => {
+  const installerSource = readFileSync(join(repoRoot, "src", "cli.ts"), "utf8");
+  assert.match(installerSource, /promptTimeoutSec: 0/);
+  assert.doesNotMatch(installerSource, /promptTimeoutSec: 120/);
+});
+
+test("Feishu-facing extension text consistently uses the OMP brand", () => {
+  const managerSource = readFileSync(conversationManagerPath, "utf8");
+  const handlerSource = readFileSync(join(repoRoot, "extension", "message-handler.ts"), "utf8");
+  assert.doesNotMatch(managerSource, /Pi error:|Pi 模型|Pi 会话/);
+  assert.match(handlerSource, /^    if \(command\.name === "doctor"/m);
 });
 
 test("installer removes only the Feishu gateway key from locks.json", () => {
@@ -129,6 +169,20 @@ test("registers OMP argument completions for /feishu subcommands", () => {
   assert.match(source, /help.*setup.*start.*stop.*restart.*refresh.*status.*doctor.*version.*debug.*autostart.*reset/s);
   assert.match(source, /const cmd = cmdRaw \|\| "status"/);
   assert.match(source, /ctx\.ui\.notify\(feishuHelpText\(\), "info"\)/);
+});
+
+test("setup restarts a running gateway, restores the old config on failure, and reset fails closed", () => {
+  const source = readFileSync(extensionPath, "utf8");
+  assert.match(source, /const hadRunningGateway = Boolean\(transport\?\.isRunning\(\) \|\| readGatewayOwner\(\)\)/);
+  assert.match(source, /if \(hadRunningGateway\) \{[\s\S]*await restartDaemon\(\)/);
+  assert.match(source, /if \(previousConfig === undefined\) removePath\(CONFIG_PATH\);[\s\S]*writeFileSync\(CONFIG_PATH, previousConfig/);
+  assert.match(source, /const stopped = await stopDaemon\(\);[\s\S]*if \(stopped\.status === "error"\)[\s\S]*重置已取消/);
+});
+
+test("remote upgrade requires an explicitly configured Feishu administrator", () => {
+  const handlerSource = readFileSync(join(repoRoot, "extension", "message-handler.ts"), "utf8");
+  assert.match(handlerSource, /if \(!this\.diagnostics\?\.isAdmin\?\.\(msg\.senderOpenId\)\)/);
+  assert.match(handlerSource, /无权执行远程升级/);
 });
 
 test("provides doctor/version diagnostics and injects the release version into daemons", () => {

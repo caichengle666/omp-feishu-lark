@@ -1,6 +1,6 @@
 import type { ExtensionCommandContext } from "@oh-my-pi/pi-coding-agent";
 import qrcode from "qrcode-terminal";
-import { CONFIG_PATH, DEFAULT_CONFIG, ensureRoot, loadConfig, mask, writeJson } from "./config.js";
+import { DEFAULT_CONFIG, ensureRoot, loadConfig } from "./config.js";
 import type { Domain, FeishuConfig, GroupPolicy } from "./types.js";
 
 export async function uiSelect<T extends string>(ctx: ExtensionCommandContext, title: string, options: Array<{ value: T; label: string }>, initialValue?: T): Promise<T> {
@@ -82,18 +82,41 @@ export async function runSetup(ctx: ExtensionCommandContext) {
     language: "zh",
     reactEmoji: DEFAULT_CONFIG.reactEmoji,
     autoStart: true,
+    promptTimeoutEnabled: false,
   };
-  writeJson(CONFIG_PATH, config);
+  ctx.ui.notify("正在验证飞书应用凭证和权限… / Verifying Feishu credentials and permissions...", "info");
+  await checkFeishuApp(config);
+  return {
+    config,
+    startNow: await uiConfirm(ctx, "现在启动飞书连接？ / Start Feishu now?", true),
+  };
+}
 
-  ctx.ui.notify(
-    `飞书配置已保存 / Feishu config saved\nPath: ${CONFIG_PATH}\nApp ID: ${mask(appId)}\n群聊策略 / Group policy: ${groupPolicy}`,
-    "info",
-  );
-
-  if (await uiConfirm(ctx, "现在启动飞书连接？ / Start Feishu now?", true)) {
-    return config;
+export async function checkFeishuApp(config: Pick<FeishuConfig, "appId" | "appSecret" | "domain">, baseOverride?: string) {
+  if (!config.appId.trim() || !config.appSecret.trim()) throw new Error("App ID 和 App Secret 不能为空。");
+  const base = baseOverride || (config.domain === "lark" ? "https://open.larksuite.com" : "https://open.feishu.cn");
+  const tokenResponse = await fetch(`${base}/open-apis/auth/v3/tenant_access_token/internal`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json; charset=utf-8" },
+    body: JSON.stringify({ app_id: config.appId, app_secret: config.appSecret }),
+    signal: AbortSignal.timeout(15_000),
+  });
+  const token = await tokenResponse.json().catch(() => ({})) as { code?: number; msg?: string; tenant_access_token?: string };
+  if (!tokenResponse.ok || token.code !== 0 || !token.tenant_access_token) {
+    throw new Error(`飞书凭证验证失败：${token.msg || `HTTP ${tokenResponse.status}`}`);
   }
-  return undefined;
+  const headers = { Authorization: `Bearer ${token.tenant_access_token}` };
+  const [botResponse, scopesResponse] = await Promise.all([
+    fetch(`${base}/open-apis/bot/v3/info`, { headers, signal: AbortSignal.timeout(15_000) }),
+    fetch(`${base}/open-apis/application/v6/scopes`, { headers, signal: AbortSignal.timeout(15_000) }),
+  ]);
+  const bot = await botResponse.json().catch(() => ({})) as { code?: number; msg?: string };
+  if (!botResponse.ok || bot.code !== 0) throw new Error(`飞书机器人验证失败：${bot.msg || `HTTP ${botResponse.status}`}`);
+  const scopes = await scopesResponse.json().catch(() => ({})) as { code?: number; msg?: string; data?: { scopes?: Array<{ scope_name?: string }> } };
+  if (!scopesResponse.ok || scopes.code !== 0) throw new Error(`飞书权限查询失败：${scopes.msg || `HTTP ${scopesResponse.status}`}`);
+  const names = new Set((scopes.data?.scopes || []).map((item) => item.scope_name));
+  const missing = ["im:message", "im:message:send_as_bot"].filter((required) => !names.has(required));
+  if (missing.length) throw new Error(`飞书应用缺少权限：${missing.join(", ")}。请在开放平台添加权限并发布新版本。`);
 }
 
 async function registerFeishuApp(ctx: ExtensionCommandContext): Promise<{ appId: string; appSecret: string; domain: Domain }> {

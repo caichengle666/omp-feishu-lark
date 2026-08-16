@@ -5,16 +5,19 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { acquireInstallerLease, releaseInstallerLease } from "./installer-lock.js";
-import { isSupervisorProcessAlive, readSupervisorRecord, writeStopRequest } from "../support/feishu-supervisor.mjs";
+import { isSupervisorProcessAlive, readSupervisorRecord, recordedProcessStatus, writeStopRequest } from "../support/feishu-supervisor.mjs";
 import { GATEWAY_LOCK_KEY, parseLocksFile, removeGatewayLockKey } from "./installer-state.js";
 import { cleanupLegacyInstallations } from "./legacy-cleanup.js";
 import { verifyRpcWorkerReady } from "./rpc-self-test.js";
+import { bunDnsArgs, resolveUpgradeNetworkPolicy, upgradeTimeoutMs } from "../extension/upgrade.js";
 
 const isWindows = process.platform === "win32";
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const packageManifest = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8")) as { version: string };
 const homeDir = process.env.HOME || process.env.USERPROFILE;
 const timeoutSeconds = parsePositiveInt(process.env.OMP_FEISHU_TIMEOUT, 90);
+const networkPolicy = resolveUpgradeNetworkPolicy(process.env.OMP_FEISHU_NETWORK);
+const dnsArgs = bunDnsArgs(networkPolicy);
 
 if (!homeDir) {
   console.error("Cannot determine the home directory. Set HOME or USERPROFILE and run again.");
@@ -116,6 +119,7 @@ console.log("==> Feishu/Lark plugin install");
 info(`target: ${pluginDir}`);
 ok(`bun: ${bunBin}`);
 ok(`omp: ${ompBin}`);
+info(`network: ${networkPolicy}`);
 if (pythonBin) ok(`python: ${pythonBin}`); else ok("python: not found (ASR 转写不可用)");
 
 let installLease: Awaited<ReturnType<typeof acquireInstallerLease>> | undefined;
@@ -147,7 +151,7 @@ if (!config) {
   const domain = prompt("Domain (feishu/lark, default feishu): ")?.trim() || "feishu";
   if (!appId || !appSecret) fail("App ID and App Secret are required.");
   if (domain !== "feishu" && domain !== "lark") fail("Domain must be feishu or lark.");
-  config = { appId, appSecret, domain, autoStart: true, promptNotifySec: 30, promptTimeoutSec: 120 };
+  config = { appId, appSecret, domain, autoStart: true, promptNotifySec: 30, promptTimeoutSec: 0, promptTimeoutEnabled: false };
   mkdirSync(runtimeDir, { recursive: true });
   writeFileSync(configPath, JSON.stringify(config, null, 2), { mode: 0o600 });
   ok("Feishu credentials saved");
@@ -175,7 +179,7 @@ const stagingExtensionDir = join(stagingDir, "extension");
 const stagingSupportDir = join(stagingDir, "support");
 mkdirSync(stagingExtensionDir, { recursive: true });
 mkdirSync(stagingSupportDir, { recursive: true });
-const extensionFiles = ["attachments.ts", "bridge-runtime.ts", "bridge-store.ts", "card-action-webhook.ts", "cards.ts", "config.ts", "conversation-manager.ts", "debug.ts", "dedupe-store.ts", "delivery.ts", "gateway-lock.ts", "help.ts", "index.ts", "message-handler.ts", "messages.ts", "notification-webhook.ts", "prompt-timeout.ts", "rich-text.ts", "rpc-worker-pool.ts", "setup.ts", "task-status-card.ts", "tencent-asr.ts", "transport.ts", "types.ts"];
+const extensionFiles = ["attachments.ts", "bridge-runtime.ts", "bridge-store.ts", "card-action-webhook.ts", "cards.ts", "config.ts", "conversation-manager.ts", "debug.ts", "dedupe-store.ts", "delivery.ts", "gateway-lock.ts", "help.ts", "index.ts", "message-handler.ts", "messages.ts", "notification-webhook.ts", "prompt-timeout.ts", "rich-text.ts", "rpc-worker-pool.ts", "setup.ts", "task-status-card.ts", "tencent-asr.ts", "transport.ts", "types.ts", "upgrade.ts"];
 for (const file of extensionFiles) {
   writeFileSync(join(stagingExtensionDir, file), readFileSync(join(packageRoot, "extension", file)));
 }
@@ -198,10 +202,16 @@ writeFileSync(stagingPackagePath, `${JSON.stringify({
 }, null, 2)}\n`);
 const pluginPackagePath = stagingPackagePath;
 info("installing plugin runtime dependencies...");
-const installed = spawnSync(bunBin, ["install", "--production", "--no-save"], { cwd: stagingDir, stdio: "inherit" });
+const installed = spawnSync(bunBin, [...dnsArgs, "install", "--production", "--no-save"], {
+  cwd: stagingDir,
+  stdio: "inherit",
+  timeout: upgradeTimeoutMs(process.env.OMP_FEISHU_UPGRADE_TIMEOUT_SEC),
+  killSignal: "SIGKILL",
+});
 if (installed.status !== 0) {
   removeDirectory(stagingDir);
-  fail("Could not install plugin runtime dependencies.");
+  const reason = installed.error?.message || installed.signal || `exit ${installed.status ?? "unknown"}`;
+  fail(`Could not install plugin runtime dependencies (network=${networkPolicy}, ${reason}). Set OMP_FEISHU_NETWORK=ipv4 or ipv6 if this device has broken dual-stack DNS.`);
 }
 ok("Plugin dependencies ready");
 
@@ -315,6 +325,9 @@ function validateInstallerConfig(value: Record<string, unknown> | undefined) {
   if (value.notificationWebhookEnabled === true && (typeof value.notificationWebhookToken !== "string" || !value.notificationWebhookToken.trim())) {
     fail(`notificationWebhookToken is required when notificationWebhookEnabled is true: ${configPath}`);
   }
+  if (value.cardActionMode === "webhook" && (typeof value.cardActionToken !== "string" || !value.cardActionToken.trim())) {
+    fail(`cardActionToken is required when cardActionMode is webhook: ${configPath}`);
+  }
 }
 
 function removeDirectory(path: string) {
@@ -342,16 +355,19 @@ function replacePluginDirectory(staging: string, target: string) {
 
 async function stopExistingDaemon(path: string) {
   if (!existsSync(path)) return;
-  let owner: { pid?: number; heartbeatAt?: string; status?: string } | undefined;
+  let owner: { pid?: number; processStart?: string; heartbeatAt?: string; status?: string } | undefined;
   try {
     const locks = parseLocksFile(readFileSync(path, "utf8"));
-    owner = locks[GATEWAY_LOCK_KEY] as { pid?: number; heartbeatAt?: string; status?: string } | undefined;
+    owner = locks[GATEWAY_LOCK_KEY] as { pid?: number; processStart?: string; heartbeatAt?: string; status?: string } | undefined;
   } catch {
     fail(`Invalid Feishu daemon lock file. Refusing to replace the running plugin: ${path}`);
   }
   if (owner?.pid && owner.pid !== process.pid) {
-    const heartbeatAge = owner.heartbeatAt ? Date.now() - Date.parse(owner.heartbeatAt) : Number.POSITIVE_INFINITY;
-    if (heartbeatAge < 60_000 || processExists(owner.pid)) {
+    const status = recordedProcessStatus(owner);
+    if (status === "unverified") {
+      fail(`Refusing to stop PID ${owner.pid}: the gateway process identity cannot be verified. Stop the old gateway manually, then retry.`);
+    }
+    if (status === "match") {
       if (isWindows) spawnSync("taskkill", ["/PID", String(owner.pid), "/T", "/F"], { stdio: "ignore" });
       else {
         try { process.kill(owner.pid, "SIGTERM"); } catch {}

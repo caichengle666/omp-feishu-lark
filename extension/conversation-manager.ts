@@ -32,6 +32,7 @@ export type ConversationTimeouts = {
   promptNotifySec?: number;
   /** Hard prompt timeout in seconds; the session is aborted on expiry (0 disables / wait indefinitely). Default 0. */
   promptTimeoutSec?: number;
+  promptTimeoutEnabled?: boolean;
 };
 
 export type StopConversationResult =
@@ -122,8 +123,9 @@ export class ConversationManager {
       const { text: answer, error: modelError } = extractLastAssistantOutcome(session);
       debugLog("feishu.prompt.done", { key, answerLength: answer.length, modelError });
       if (!answer && modelError) {
-        await onReply(`模型调用失败：${modelError}`);
-        await status?.finish("failed", modelError);
+        const userError = formatUserFacingError(modelError);
+        await onReply(userError);
+        await status?.finish("failed", userError);
         return;
       }
       await onReply(answer || "No response.");
@@ -131,8 +133,9 @@ export class ConversationManager {
     }).catch(async (error) => {
       const message = error instanceof Error ? error.message : String(error);
       debugLog("feishu.prompt.error", { key, error: message });
-      await status?.finish("failed", message);
-      await onReply(`Pi error: ${message}`);
+      const userError = formatUserFacingError(message);
+      await status?.finish("failed", userError);
+      await onReply(userError);
     });
     this.queues.set(key, next);
     await next;
@@ -153,10 +156,10 @@ export class ConversationManager {
     }
 
     active.stopped = true;
-    await active.status?.stopImmediately("用户已停止任务");
     try {
       if (active.abort) await active.abort();
       else await active.session?.abort();
+      await active.status?.stopImmediately("用户已停止任务");
       debugLog("feishu.prompt.abort", { key });
       const message = "已停止当前处理。";
       await onReply(message);
@@ -183,7 +186,7 @@ export class ConversationManager {
       writeJson(STATE_PATH, this.state);
       await onReply("已创建新会话。旧会话历史已保留，下一条消息会从新上下文开始。");
     }).catch(async (error) => {
-      await onReply(`Pi error: ${error instanceof Error ? error.message : String(error)}`);
+      await onReply(`OMP error: ${error instanceof Error ? error.message : String(error)}`);
     });
     this.queues.set(key, next);
     await next;
@@ -260,7 +263,7 @@ export class ConversationManager {
         "下一条消息会继续接着这个会话往下聊。",
       ].join("\n"));
     }).catch(async (error) => {
-      await onReply(`Pi error: ${error instanceof Error ? error.message : String(error)}`);
+      await onReply(`OMP error: ${error instanceof Error ? error.message : String(error)}`);
     });
     this.queues.set(key, next);
     await next;
@@ -286,7 +289,7 @@ export class ConversationManager {
       this.sessions.delete(key);
       await onReply(`已切换到 ${provider}/${modelId}。当前飞书会话后续都会使用这个模型。`);
     }).catch(async (error) => {
-      await onReply(`Pi error: ${error instanceof Error ? error.message : String(error)}`);
+      await onReply(`OMP error: ${error instanceof Error ? error.message : String(error)}`);
     });
     this.queues.set(key, next);
     await next;
@@ -319,9 +322,9 @@ export class ConversationManager {
       delete this.state.sessions[key];
       this.state.workspaces![key] = workspace;
       writeJson(STATE_PATH, this.state);
-      await onReply(`已切换到工作区：${workspace}\n下一条消息会在这个目录里创建新的 Pi 会话。`);
+      await onReply(`已切换到工作区：${workspace}\n下一条消息会在这个目录里创建新的 OMP 会话。`);
     }).catch(async (error) => {
-      await onReply(error instanceof Error ? error.message : `Pi error: ${String(error)}`);
+      await onReply(error instanceof Error ? error.message : `OMP error: ${String(error)}`);
     });
     this.queues.set(key, next);
     await next;
@@ -421,6 +424,7 @@ export class ConversationManager {
   }
 
   private hardTimeoutMs() {
+    if (this.timeouts?.promptTimeoutEnabled !== true) return 0;
     const sec = this.timeouts?.promptTimeoutSec;
     return typeof sec === "number" && Number.isFinite(sec) && sec > 0 ? sec * 1000 : 0;
   }
@@ -445,7 +449,7 @@ export class ConversationManager {
     await waitForPrompt(session.prompt(userText, images.length ? { images } : undefined), {
       notifyMs,
       hardMs,
-      hardTimeoutMessage: `Pi 模型处理超时（超过 ${hardSec} 秒）仍未完成，已中止任务。可点击卡片「停止任务」或调大 config.json 中的 promptTimeoutSec。`,
+      hardTimeoutMessage: `OMP 模型处理超时（超过 ${hardSec} 秒）仍未完成，已中止任务。可点击卡片「停止任务」或调大 config.json 中的 promptTimeoutSec。`,
       onStillRunning: () => {
         debugLog("feishu.prompt.notify_still_running", { key, elapsedMs: notifyMs });
         // The task is not failing — it is still running. Tell the user instead
@@ -522,7 +526,7 @@ export class ConversationManager {
         model: model ? { provider: model.provider, id: model.id } : undefined,
         text: userText,
         images,
-        timeoutMs: this.hardTimeoutMs() || 24 * 60 * 60 * 1000,
+        timeoutMs: this.hardTimeoutMs() || 2_147_483_647,
         status,
         onSessionReady: (id) => {
           sessionId = id;
@@ -544,8 +548,9 @@ export class ConversationManager {
       const answer = result.text;
       debugLog("feishu.rpc_prompt.done", { key, answerLength: answer.length, modelError: result.error });
       if (!answer && result.error) {
-        await onReply(`模型调用失败：${result.error}`);
-        await status?.finish("failed", result.error);
+        const userError = formatUserFacingError(result.error);
+        await onReply(userError);
+        await status?.finish("failed", userError);
         return;
       }
       await onReply(answer || "No response.");
@@ -560,8 +565,9 @@ export class ConversationManager {
       }
       const message = error instanceof Error ? error.message : String(error);
       debugLog("feishu.rpc_prompt.error", { key, error: message });
-      await status?.finish("failed", message);
-      await onReply(`Pi error: ${message}`);
+      const userError = formatUserFacingError(message);
+      await status?.finish("failed", userError);
+      await onReply(userError);
     });
     this.queues.set(key, next);
     await next;
@@ -638,6 +644,24 @@ function extractLastAssistantOutcomeFromMessages(messages: readonly any[]): { te
     return { text: extractTextContent(msg.content), error };
   }
   return { text: "" };
+}
+
+export function formatUserFacingError(error: unknown) {
+  const raw = error instanceof Error ? error.message : String(error || "未知错误");
+  if (/\b400\b/i.test(raw) && /reasoning[_\s-]*content/i.test(raw)) {
+    return "模型服务错误（HTTP 400）：reasoning_content 与当前接口不兼容，请切换模型或稍后重试。";
+  }
+  if (/\b524\b/i.test(raw)) {
+    return "上游模型服务超时（HTTP 524）：服务未能及时返回，请稍后重试或切换模型。";
+  }
+  if (/timeout collecting events/i.test(raw)) {
+    return "OMP 等待模型事件超时：任务未在配置时限内完成并已停止。可重试，或保持硬超时关闭。";
+  }
+  const serverStatus = /(?:HTTP\s*)?\b(5\d{2})\b/i.exec(raw)?.[1];
+  if (serverStatus) {
+    return `模型服务错误（HTTP ${serverStatus}）：上游服务暂时不可用，请稍后重试或切换模型。`;
+  }
+  return `OMP error: ${raw}`;
 }
 
 function resolveWorkspacePath(input: string) {

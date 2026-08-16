@@ -6,8 +6,8 @@ import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { getAgentDir } from "@oh-my-pi/pi-coding-agent";
 import { RpcClient } from "@oh-my-pi/pi-coding-agent/modes/rpc/rpc-client";
 import { buildModelCard, buildResumeCard, parseModelActionValue, parseResumePageActionValue, parseResumeSelectActionValue } from "./cards.js";
-import { isSupervisorProcessAlive, readSupervisorRecord, writeStopRequest } from "../support/feishu-supervisor.mjs";
-import { BRIDGE_PATH, CONFIG_PATH, DAEMON_LOG_PATH, DEBUG_LOG_PATH, DEDUPE_PATH, ensureRoot, loadConfig, mask, removePath, STATE_PATH, SUPERVISOR_PID_PATH, SUPERVISOR_STOP_PATH, writeJson } from "./config.js";
+import { isSupervisorProcessAlive, readSupervisorRecord, recordedProcessStatus, writeStopRequest } from "../support/feishu-supervisor.mjs";
+import { BRIDGE_PATH, CONFIG_PATH, DAEMON_LOG_PATH, DEBUG_LOG_PATH, DEDUPE_PATH, ensureRoot, isFeishuAdmin, loadConfig, mask, readJson, removePath, STATE_PATH, SUPERVISOR_PID_PATH, SUPERVISOR_STOP_PATH, UPGRADE_NOTICE_PATH, writeJson } from "./config.js";
 import { debugLog, flushDebugLog } from "./debug.js";
 import { FeishuBridgeRuntime } from "./bridge-runtime.js";
 import { FeishuBridgeStore } from "./bridge-store.js";
@@ -20,8 +20,25 @@ import { acquireFileLease, acquireGatewayLock, gatewayLockPath, readGatewayOwner
 import { FeishuMessageHandler } from "./message-handler.js";
 import { runSetup, uiConfirm } from "./setup.js";
 import { buildTaskStatusCard, parseStopTaskActionValue } from "./task-status-card.js";
+import { bunDnsArgs, compareVersions, registryNetworkAttempts, resolveTargetVersion, resolveUpgradeNetworkPolicy, upgradeTimeoutMs } from "./upgrade.js";
 import { BotUnavailableError, FeishuTransport } from "./transport.js";
 import type { FeishuConfig, FeishuStatus } from "./types.js";
+
+type UpgradeNoticeTarget = {
+  chatId: string;
+  messageId?: string;
+  sessionKey?: string;
+  chatType?: string;
+};
+
+type UpgradeNotice = {
+  from?: string;
+  to?: string;
+  targets?: UpgradeNoticeTarget[];
+  at?: string;
+  chatId?: string;
+  sessionKey?: string;
+};
 
 export default function feishuExtension(pi: ExtensionAPI) {
   let transport: FeishuTransport | undefined;
@@ -42,10 +59,13 @@ export default function feishuExtension(pi: ExtensionAPI) {
   const conversations = new ConversationManager(process.cwd(), bridge, {
     promptNotifySec: bootConfig?.promptNotifySec,
     promptTimeoutSec: bootConfig?.promptTimeoutSec,
+    promptTimeoutEnabled: bootConfig?.promptTimeoutEnabled,
   }, rpcWorkers);
   const messageHandler = new FeishuMessageHandler(conversations, () => transport, bridgeStore, {
     doctor: () => doctorReport(),
     version: () => versionReport(),
+    upgrade: (version, target) => requestUpgrade(version || "", target),
+    isAdmin: (openId: string) => isFeishuAdmin(loadConfig(), openId),
   });
 
   const STATUS_KEY = "feishu-connection";
@@ -54,6 +74,7 @@ export default function feishuExtension(pi: ExtensionAPI) {
   let lastStatusText: string | undefined;
   let statusRefreshTimer: NodeJS.Timeout | undefined;
   const buildTag = process.env.FEISHU_EXT_DEV === "1" ? " [DEV]" : "";
+  let upgradeInFlight = false;
 
   function setStatusText(text: string | undefined) {
     if (lastStatusText === text) return;
@@ -140,7 +161,20 @@ export default function feishuExtension(pi: ExtensionAPI) {
       throw new Error(`Missing config. Run /feishu setup first. 配置不存在，请先运行 /feishu setup。`);
     }
     updateStatus("connecting");
-    const lockResult = await acquireGatewayLock(process.cwd(), Boolean(options.takeover));
+    let lockResult = await acquireGatewayLock(process.cwd(), Boolean(options.takeover));
+    // Daemon startup races the previous daemon winding down after an upgrade
+    // replaces the plugin files: the old process owns the lock until its exit.
+    // Instead of exiting immediately (supervisor restart loop / false "found
+    // existing owner"), poll for the stale owner to release ownership so the
+    // switch converges in one generation.
+    if (lockResult.status === "busy" && process.env.PI_FEISHU_DAEMON === "1" && !options.takeover) {
+      const deadline = Date.now() + 20_000;
+      while (Date.now() < deadline) {
+        await sleep(1_000);
+        lockResult = await acquireGatewayLock(process.cwd(), false);
+        if (lockResult.status === "acquired") break;
+      }
+    }
     if (lockResult.status === "busy") {
       updateStatus("owned");
       return { status: "owned" as const, owner: lockResult.owner };
@@ -229,6 +263,11 @@ export default function feishuExtension(pi: ExtensionAPI) {
       updateStatus("connected");
       // 预热模型列表,避免第一次命令调用时等待 provider 超时
       conversations.warmupModels().catch(() => undefined);
+      if (process.env.PI_FEISHU_DAEMON === "1") {
+        await deliverUpgradeNotice().catch((error) => {
+          console.error("[feishu] upgrade notice delivery failed:", error instanceof Error ? error.message : error);
+        });
+      }
 
       return "started";
     } catch (error) {
@@ -280,13 +319,19 @@ export default function feishuExtension(pi: ExtensionAPI) {
     return `启动失败：${cause}\n${message}\n请运行 /feishu doctor，并查看日志：${DAEMON_LOG_PATH}`;
   }
 
-  function pluginVersion() {
-    if (process.env.FEISHU_PLUGIN_VERSION) return process.env.FEISHU_PLUGIN_VERSION;
+  function runtimePackageVersion() {
     try {
       const packagePath = join(dirname(fileURLToPath(import.meta.url)), "..", "package.json");
       const manifest = JSON.parse(readFileSync(packagePath, "utf8"));
       if (typeof manifest.version === "string" && manifest.version) return manifest.version;
     } catch {}
+    return undefined;
+  }
+
+  function pluginVersion() {
+    if (process.env.FEISHU_PLUGIN_VERSION) return process.env.FEISHU_PLUGIN_VERSION;
+    const runtimeVersion = runtimePackageVersion();
+    if (runtimeVersion) return runtimeVersion;
     try {
       const lockPath = join(getAgentDir(), "..", "plugins", "omp-plugins.lock.json");
       const lock = JSON.parse(readFileSync(lockPath, "utf8"));
@@ -294,6 +339,42 @@ export default function feishuExtension(pi: ExtensionAPI) {
       if (typeof version === "string" && version) return version;
     } catch {}
     return "unknown";
+  }
+
+  async function deliverUpgradeNotice() {
+    if (!existsSync(UPGRADE_NOTICE_PATH) || !transport) return;
+    const notice = JSON.parse(readFileSync(UPGRADE_NOTICE_PATH, "utf8")) as UpgradeNotice;
+    if (!notice.from || !notice.to) return;
+    const targets = notice.targets?.length
+      ? notice.targets
+      : notice.chatId
+        ? [{ chatId: notice.chatId, sessionKey: notice.sessionKey }]
+        : [];
+    if (!targets.length) {
+      removePath(UPGRADE_NOTICE_PATH);
+      return;
+    }
+
+    const reportedVersion = pluginVersion();
+    const packageVersion = runtimePackageVersion() || "unknown";
+    const healthy = reportedVersion === notice.to && packageVersion === notice.to && transport.isRunning();
+    const doctor = await doctorReport().catch((error) => `Feishu doctor failed: ${error instanceof Error ? error.message : String(error)}`);
+    const text = [
+      healthy ? `升级自检通过：${notice.from} → ${notice.to}` : `升级自检失败：目标 ${notice.to}，当前 ${reportedVersion}`,
+      `Runtime package: ${packageVersion}`,
+      doctor,
+    ].join("\n");
+    const failed: UpgradeNoticeTarget[] = [];
+    for (const target of targets) {
+      try {
+        if (target.messageId) await transport.replyText(target.messageId, text);
+        else await transport.sendText(target.chatId, text);
+      } catch {
+        failed.push(target);
+      }
+    }
+    if (failed.length) writeJson(UPGRADE_NOTICE_PATH, { ...notice, targets: failed });
+    else removePath(UPGRADE_NOTICE_PATH);
   }
 
   function versionReport() {
@@ -361,7 +442,9 @@ export default function feishuExtension(pi: ExtensionAPI) {
           if (!await waitForSupervisorExit(supervisor, 15_000)) throw new Error(`Supervisor ${supervisor.pid} did not stop`);
           await waitForPathRemoval(SUPERVISOR_PID_PATH, 2_000);
           stoppedSupervisor = true;
-        } else if (owner?.pid) { try { process.kill(owner.pid, "SIGTERM"); } catch {} }
+        } else if (owner?.pid) {
+          stopVerifiedGatewayOwner(owner);
+        }
         if (!stoppedSupervisor && owner?.pid && !await waitForProcessExit(owner.pid, 10_000)) throw new Error(`Gateway owner ${owner.pid} did not stop`);
       }
 
@@ -416,7 +499,7 @@ export default function feishuExtension(pi: ExtensionAPI) {
         if (!await waitForSupervisorExit(supervisor, 15_000)) throw new Error(`Supervisor ${supervisor.pid} did not stop`);
         await waitForPathRemoval(SUPERVISOR_PID_PATH, 2_000);
         stoppedSupervisor = true;
-      } else if (owner?.pid) process.kill(owner.pid, "SIGTERM");
+      } else if (owner?.pid) stopVerifiedGatewayOwner(owner);
       else return { status: "none" as const };
       if (!stoppedSupervisor && owner?.pid && !await waitForProcessExit(owner.pid, 10_000)) throw new Error(`Gateway owner ${owner.pid} did not stop`);
       return { status: "stopped" as const, owner };
@@ -432,10 +515,111 @@ export default function feishuExtension(pi: ExtensionAPI) {
     return { status: "restarted" as const, stopped, started };
   }
 
+  async function requestUpgrade(targetVersion: string, noticeTarget?: UpgradeNoticeTarget): Promise<string> {
+    if (upgradeInFlight) return "已有升级任务正在执行，请等待升级完成通知。";
+    upgradeInFlight = true;
+    try {
+      return await upgradeDaemon(targetVersion, noticeTarget);
+    } finally {
+      upgradeInFlight = false;
+    }
+  }
+
+async function upgradeDaemon(targetVersion: string, noticeTarget?: UpgradeNoticeTarget): Promise<string> {
+    const current = pluginVersion();
+    const spec = daemonSpec();
+    const networkPolicy = resolveUpgradeNetworkPolicy(process.env.OMP_FEISHU_NETWORK);
+    let dnsArgs = bunDnsArgs(networkPolicy);
+    let target: string;
+    {
+      let latest: string | undefined;
+      if (!targetVersion) {
+        const failures: string[] = [];
+        for (const attemptArgs of registryNetworkAttempts(networkPolicy)) {
+          const result = await runProcess(spec.bunBin, [...attemptArgs, "pm", "view", "@caichengle/omp-feishu-lark", "version"], {
+            timeout: 30_000,
+            cwd: process.cwd(),
+            env: { ...process.env },
+          });
+          const candidate = result.stdout.trim().split(/\r?\n/).pop();
+          if (result.code === 0 && candidate) {
+            latest = candidate;
+            dnsArgs = attemptArgs;
+            break;
+          }
+          failures.push((result.stderr || result.stdout || `exit ${result.code ?? "unknown"}`).trim().split(/\r?\n/).pop() || "unknown error");
+        }
+        if (!latest) {
+          throw new Error(`无法查询 npm registry（network=${networkPolicy}）：${failures.join(" | ")}。可设置 OMP_FEISHU_NETWORK=ipv4 或 ipv6 后重试。`);
+        }
+      }
+      const resolved = resolveTargetVersion(targetVersion, latest);
+      if (resolved.ok === false) {
+        throw new Error(resolved.reason);
+      }
+      target = resolved.version;
+    }
+    if (target === current) {
+      return `当前已是最新版本 ${current}，无需升级。`;
+    }
+    if (compareVersions(target, current) < 0) {
+      return `目标版本 ${target} 低于当前版本 ${current}，拒绝降级。`;
+    }
+    // 从自身入口自动定位真实安装目录，不依赖 cwd、环境变量或人工传参。
+    const pluginDir = dirname(dirname(spec.extensionPath));
+    // --no-restart：安装器只替换文件，不重启 daemon（避免 90s 超时与残留进程）。
+    // 装完校验 exit 0 后再由本进程触发重启（TUI: restartDaemon；daemon 内: 退出交给 supervisor 拉起）。
+    const args = [...dnsArgs, "x", `@caichengle/omp-feishu-lark@${target}`, pluginDir, "--no-restart"];
+    const result = await runProcess(spec.bunBin, args, {
+      timeout: upgradeTimeoutMs(process.env.OMP_FEISHU_UPGRADE_TIMEOUT_SEC),
+      cwd: process.cwd(),
+      env: { ...process.env },
+    });
+    if (result.code !== 0) {
+      const detail = (result.stderr || result.stdout || "").trim().split("\n").pop() || "";
+      throw new Error(`升级安装失败（exit ${result.code ?? "unknown"}, network=${networkPolicy}）：${detail || "安装器未返回错误详情"}`);
+    }
+    if (process.env.PI_FEISHU_DAEMON === "1") {
+      // 升级前记录通知目标：找最近活跃的 p2p 会话，新 daemon 启动连上 WS 后
+      // 会读 upgrade-notice.json 给这个会话补发"升级完成"消息 —— 不补，用户只能死等。
+      try {
+        let targetForNotice = noticeTarget;
+        if (!targetForNotice) {
+          const routes = readJson<{ routes?: Record<string, UpgradeNoticeTarget & { updatedAt?: number }> }>(BRIDGE_PATH, { routes: {} }).routes || {};
+          targetForNotice = Object.values(routes)
+            .filter((route) => Boolean(route.chatId))
+            .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))[0];
+        }
+        if (targetForNotice?.chatId) {
+          writeJson(UPGRADE_NOTICE_PATH, {
+            from: current,
+            to: target,
+            targets: [targetForNotice],
+            at: new Date().toISOString(),
+          } satisfies UpgradeNotice);
+        }
+      } catch {}
+      // daemon 内：文件已换。先返回（飞书回执发出），稍后主动释放
+      // gateway lock / 停 WS 再退出，由 supervisor 自动拉起新版 daemon。
+      // 不靠 setTimeout 硬退 —— 硬退若被阻塞会导致新旧 daemon 并存。
+      queueMicrotask(() => {
+        void (async () => {
+          await sleep(1500);
+          try { await stop(); } catch {}
+          await flushDebugLog();
+          process.exit(0);
+        })();
+      });
+      return `升级文件已就绪（${current} → ${target}），正在重启服务…`;
+    }
+    await restartDaemon();
+    return `升级完成：${current} → ${pluginVersion()}，服务已重启。`;
+  }
+
   pi.registerCommand("feishu", {
-    description: "Feishu/Lark: help, setup, start, stop, restart, refresh, status, doctor, version, debug, autostart, reset",
+    description: "Feishu/Lark: help, setup, start, stop, restart, refresh, status, doctor, version, debug, autostart, upgrade, reset",
     getArgumentCompletions: (prefix) => {
-      const commands = ["help", "setup", "start", "stop", "restart", "refresh", "status", "doctor", "version", "debug", "autostart", "reset"];
+      const commands = ["help", "setup", "start", "stop", "restart", "refresh", "status", "doctor", "version", "debug", "autostart", "upgrade", "reset"];
       const query = prefix.trim().toLowerCase();
       return commands
         .filter((command) => command.startsWith(query))
@@ -451,10 +635,27 @@ export default function feishuExtension(pi: ExtensionAPI) {
           return;
         }
         if (cmd === "setup") {
-          const configToStart = await runSetup(ctx);
-          if (configToStart) {
-            writeJson(CONFIG_PATH, configToStart);
-            notifyDaemonStartResult(ctx, await startDaemon(false));
+          const previousConfig = existsSync(CONFIG_PATH) ? readFileSync(CONFIG_PATH, "utf8") : undefined;
+          const setup = await runSetup(ctx);
+          const hadRunningGateway = Boolean(transport?.isRunning() || readGatewayOwner());
+          writeJson(CONFIG_PATH, setup.config);
+          if (setup.startNow) {
+            try {
+              if (hadRunningGateway) {
+                const result = await restartDaemon();
+                if (result.status === "error") throw result.stopped.error;
+                ctx.ui.notify(`飞书配置已更新，连接已重启。\nOwner: ${formatOwner(result.started.owner)}`, "info");
+              } else {
+                notifyDaemonStartResult(ctx, await startDaemon(false));
+              }
+            } catch (error) {
+              if (previousConfig === undefined) removePath(CONFIG_PATH);
+              else writeFileSync(CONFIG_PATH, previousConfig, "utf8");
+              if (hadRunningGateway) await startDaemon(true).catch(() => undefined);
+              throw new Error(`新配置启动失败，已恢复原配置：${error instanceof Error ? error.message : String(error)}`);
+            }
+          } else {
+            ctx.ui.notify(`飞书配置已保存。\nPath: ${CONFIG_PATH}\nApp ID: ${mask(setup.config.appId)}`, "info");
           }
           refreshStatusFromState();
           return;
@@ -498,6 +699,17 @@ export default function feishuExtension(pi: ExtensionAPI) {
           refreshStatusFromState();
           return;
         }
+        if (cmd === "upgrade") {
+          const [, targetVersion] = args.trim().split(/\s+/, 2);
+          try {
+            const report = await requestUpgrade(targetVersion || "");
+            ctx.ui.notify(report, "info");
+          } catch (error) {
+            ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+          }
+          refreshStatusFromState();
+          return;
+        }
         if (cmd === "reset") {
           const ok = await uiConfirm(
             ctx,
@@ -508,7 +720,12 @@ export default function feishuExtension(pi: ExtensionAPI) {
             ctx.ui.notify("Reset cancelled / 已取消重置", "info");
             return;
           }
-          await stopDaemon();
+          const stopped = await stopDaemon();
+          if (stopped.status === "error") {
+            ctx.ui.notify(`重置已取消：无法停止飞书连接。${stopped.error instanceof Error ? stopped.error.message : String(stopped.error)}`, "error");
+            refreshStatusFromState();
+            return;
+          }
           removePath(CONFIG_PATH);
           removePath(STATE_PATH);
           removePath(DEDUPE_PATH);
@@ -601,10 +818,18 @@ export default function feishuExtension(pi: ExtensionAPI) {
 
   if (bootConfig && bootConfig.autoStart !== false) {
     if (process.env.PI_FEISHU_DAEMON === "1") {
-      start().then((result) => {
+      start().then(async (result) => {
         if (typeof result === "object" && result.status === "owned") {
-          console.error("[feishu] daemon found existing owner, exiting:", formatOwner(result.owner));
-          process.exit(0);
+          // A previous daemon still owns the lock (its supervisor may outlive
+          // the upgrade). Do NOT exit — that makes our supervisor restart us
+          // and spin until the old process dies. Instead keep polling inside
+          // start() so takeover happens the moment the lock frees.
+          console.error("[feishu] daemon found existing owner, waiting for takeover:", formatOwner(result.owner));
+          const claimed = await waitForTakeover(start, 300_000);
+          if (!claimed) {
+            console.error("[feishu] daemon could not take over gateway within 300s; exiting");
+            process.exit(0);
+          }
         }
       }).catch((error) => {
         updateStatus(error instanceof BotUnavailableError ? "bot unavailable" : "disconnected");
@@ -673,6 +898,66 @@ function processExists(pid: number) {
   }
 }
 
+async function runProcess(
+  command: string,
+  args: string[],
+  options: { cwd: string; env: NodeJS.ProcessEnv; timeout: number },
+) {
+  return await new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd: options.cwd,
+      env: options.env,
+      stdio: ["ignore", "pipe", "pipe"],
+      detached: process.platform !== "win32",
+      windowsHide: true,
+    });
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    const append = (current: string, chunk: Buffer | string) => `${current}${chunk}`.slice(-64 * 1024);
+    child.stdout.on("data", (chunk) => { stdout = append(stdout, chunk); });
+    child.stderr.on("data", (chunk) => { stderr = append(stderr, chunk); });
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      terminateProcessTree(child.pid);
+      reject(new Error(`升级安装超过 ${Math.ceil(options.timeout / 1000)} 秒，已终止安装进程树。可通过 OMP_FEISHU_UPGRADE_TIMEOUT_SEC 调整。`));
+    }, options.timeout);
+    child.once("error", (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.once("exit", (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({ code, stdout, stderr });
+    });
+  });
+}
+
+function terminateProcessTree(pid: number | undefined) {
+  if (!pid) return;
+  if (process.platform === "win32") {
+    spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+    return;
+  }
+  try { process.kill(-pid, "SIGKILL"); } catch {
+    try { process.kill(pid, "SIGKILL"); } catch {}
+  }
+}
+
+function stopVerifiedGatewayOwner(owner: GatewayOwner) {
+  const status = recordedProcessStatus(owner);
+  if (status === "dead" || status === "mismatch") return;
+  if (status === "unverified") {
+    throw new Error(`拒绝停止 PID ${owner.pid}：无法核验网关进程启动指纹。请手动确认旧进程后再重试。`);
+  }
+  process.kill(owner.pid, "SIGTERM");
+}
+
 async function waitForProcessExit(pid: number, timeoutMs: number) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -719,6 +1004,24 @@ async function waitForPathRemoval(path: string, timeoutMs: number) {
 function daemonStartTimeoutMs() {
   const seconds = Number.parseInt(process.env.OMP_FEISHU_TIMEOUT || "", 10);
   return (Number.isFinite(seconds) && seconds > 0 ? seconds : 120) * 1000;
+}
+
+// Called from the daemon autoStart path after start() reports "owned" while a
+// previous daemon is still winding down. start() already polled for 20s; keep
+// polling until the stale owner releases the lock so this daemon takes over
+// instead of exiting and making the supervisor restart-loop.
+async function waitForTakeover(start: (config?: FeishuConfig, options?: { takeover?: boolean }) => Promise<{ status: string; owner?: GatewayOwner } | string>, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    await sleep(1_000);
+    // 不强制接管：force=true 会覆盖仍存活的 daemon，导致双进程抢占。
+    // 等旧 owner 退出后锁自然可用，非重试即可拿到。
+    const result = await start(undefined, { takeover: false });
+    // start() 成功返回字符串 "started" / "already"，也视为接管成功。
+    if (result === "started" || result === "already") return true;
+    if (typeof result === "object" && result.status !== "owned") return true;
+  }
+  return false;
 }
 
 function sleep(ms: number) {

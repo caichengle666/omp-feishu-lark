@@ -172,6 +172,11 @@ used to suppress repeat delivery. The same settings can be supplied through
 Run `/feishu help` in OMP, or send `/feishu help` or `/help` to the bot, for a
 Chinese description of every plugin and chat command.
 
+Remote administrative commands such as `/feishu upgrade` are denied by
+default. Add the administrator's Feishu Open ID to `adminOpenIds` in
+`config.json`, or set a comma-separated `FEISHU_ADMIN_OPEN_IDS` environment
+variable. A denied command replies with the caller's Open ID.
+
 ### Upgrading older installs
 
 The installer migrates older Windows, Linux, and macOS layouts before starting

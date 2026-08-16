@@ -19,11 +19,12 @@ export const SUPERVISOR_PID_PATH = join(ROOT_DIR, "supervisor.pid");
 export const SUPERVISOR_STOP_PATH = join(ROOT_DIR, "supervisor.stop");
 export const DEDUPE_PATH = join(ROOT_DIR, "dedupe.json");
 export const BRIDGE_PATH = join(ROOT_DIR, "bridge.json");
+export const UPGRADE_NOTICE_PATH = join(ROOT_DIR, "upgrade-notice.json");
 export const CHILD_SESSION_ENV = "PI_FEISHU_CHILD_SESSION";
 
 export const DEFAULT_CONFIG: Pick<
   FeishuConfig,
-  "domain" | "groupPolicy" | "cardActionMode" | "cardActionWebhookHost" | "cardActionWebhookPort" | "cardActionWebhookPath" | "notificationWebhookEnabled" | "notificationWebhookHost" | "notificationWebhookPort" | "notificationWebhookPath" | "language" | "reactEmoji" | "autoStart" | "promptNotifySec" | "promptTimeoutSec"
+  "domain" | "groupPolicy" | "cardActionMode" | "cardActionWebhookHost" | "cardActionWebhookPort" | "cardActionWebhookPath" | "notificationWebhookEnabled" | "notificationWebhookHost" | "notificationWebhookPort" | "notificationWebhookPath" | "language" | "reactEmoji" | "autoStart" | "promptNotifySec" | "promptTimeoutSec" | "promptTimeoutEnabled"
 > = {
   domain: "feishu",
   groupPolicy: "open",
@@ -40,6 +41,7 @@ export const DEFAULT_CONFIG: Pick<
   autoStart: true,
   promptNotifySec: 180,
   promptTimeoutSec: 0,
+  promptTimeoutEnabled: false,
 };
 
 export function ensureRoot() {
@@ -87,8 +89,10 @@ export function loadConfig(): FeishuConfig | undefined {
       language: (process.env.FEISHU_LANGUAGE as "zh" | "en") || DEFAULT_CONFIG.language,
       reactEmoji: process.env.FEISHU_REACT_EMOJI || DEFAULT_CONFIG.reactEmoji,
       autoStart: process.env.FEISHU_AUTO_START ? process.env.FEISHU_AUTO_START !== "0" : DEFAULT_CONFIG.autoStart,
+      adminOpenIds: parseAdminOpenIds(process.env.FEISHU_ADMIN_OPEN_IDS),
       promptNotifySec: parseEnvSeconds(process.env.FEISHU_PROMPT_NOTIFY_SEC) ?? DEFAULT_CONFIG.promptNotifySec,
       promptTimeoutSec: parseEnvSeconds(process.env.FEISHU_PROMPT_TIMEOUT_SEC) ?? DEFAULT_CONFIG.promptTimeoutSec,
+      promptTimeoutEnabled: parseEnvBoolean(process.env.FEISHU_PROMPT_TIMEOUT_ENABLED) ?? DEFAULT_CONFIG.promptTimeoutEnabled,
     });
   }
   if (!existsSync(CONFIG_PATH)) return undefined;
@@ -111,8 +115,10 @@ export function loadConfig(): FeishuConfig | undefined {
     language: cfg.language || DEFAULT_CONFIG.language,
     reactEmoji: cfg.reactEmoji || DEFAULT_CONFIG.reactEmoji,
     autoStart: cfg.autoStart ?? DEFAULT_CONFIG.autoStart,
+    adminOpenIds: normalizeAdminOpenIds(cfg.adminOpenIds),
     promptNotifySec: numberOr(cfg.promptNotifySec, DEFAULT_CONFIG.promptNotifySec),
     promptTimeoutSec: numberOr(cfg.promptTimeoutSec, DEFAULT_CONFIG.promptTimeoutSec),
+    promptTimeoutEnabled: cfg.promptTimeoutEnabled ?? DEFAULT_CONFIG.promptTimeoutEnabled,
   });
 }
 
@@ -123,6 +129,7 @@ export function validateConfig(value: unknown): FeishuConfig | undefined {
   if (typeof raw.appSecret !== "string" || !raw.appSecret.trim()) return undefined;
   const domain = raw.domain || DEFAULT_CONFIG.domain;
   const groupPolicy = raw.groupPolicy || DEFAULT_CONFIG.groupPolicy;
+  const cardActionMode = parseCardActionMode(raw.cardActionMode) || DEFAULT_CONFIG.cardActionMode;
   if (domain !== "feishu" && domain !== "lark") return undefined;
   if (groupPolicy !== "open" && groupPolicy !== "mention") return undefined;
   const language = raw.language || DEFAULT_CONFIG.language;
@@ -132,6 +139,7 @@ export function validateConfig(value: unknown): FeishuConfig | undefined {
   const notificationPort = raw.notificationWebhookPort ?? DEFAULT_CONFIG.notificationWebhookPort;
   if (typeof notificationPort !== "number" || !Number.isInteger(notificationPort) || notificationPort < 1 || notificationPort > 65535) return undefined;
   if (raw.notificationWebhookEnabled && (typeof raw.notificationWebhookToken !== "string" || !raw.notificationWebhookToken.trim())) return undefined;
+  if (cardActionMode === "webhook" && (typeof raw.cardActionToken !== "string" || !raw.cardActionToken.trim())) return undefined;
   const promptNotifySec = numberOr(raw.promptNotifySec, DEFAULT_CONFIG.promptNotifySec);
   const promptTimeoutSec = numberOr(raw.promptTimeoutSec, DEFAULT_CONFIG.promptTimeoutSec);
   if (promptNotifySec < 0 || promptTimeoutSec < 0) return undefined;
@@ -140,7 +148,7 @@ export function validateConfig(value: unknown): FeishuConfig | undefined {
     appSecret: raw.appSecret.trim(),
     domain,
     groupPolicy,
-    cardActionMode: parseCardActionMode(raw.cardActionMode) || DEFAULT_CONFIG.cardActionMode,
+    cardActionMode,
     cardActionToken: typeof raw.cardActionToken === "string" && raw.cardActionToken.trim() ? raw.cardActionToken.trim() : undefined,
     cardActionWebhookHost: typeof raw.cardActionWebhookHost === "string" && raw.cardActionWebhookHost.trim() ? raw.cardActionWebhookHost.trim() : DEFAULT_CONFIG.cardActionWebhookHost,
     cardActionWebhookPort: port,
@@ -153,9 +161,25 @@ export function validateConfig(value: unknown): FeishuConfig | undefined {
     language,
     reactEmoji: typeof raw.reactEmoji === "string" ? raw.reactEmoji : DEFAULT_CONFIG.reactEmoji,
     autoStart: typeof raw.autoStart === "boolean" ? raw.autoStart : DEFAULT_CONFIG.autoStart,
+    adminOpenIds: normalizeAdminOpenIds(raw.adminOpenIds),
     promptNotifySec,
     promptTimeoutSec,
+    promptTimeoutEnabled: typeof raw.promptTimeoutEnabled === "boolean" ? raw.promptTimeoutEnabled : DEFAULT_CONFIG.promptTimeoutEnabled,
   };
+}
+
+export function isFeishuAdmin(config: FeishuConfig | undefined, openId: string) {
+  return Boolean(openId && config?.adminOpenIds?.includes(openId));
+}
+
+function parseAdminOpenIds(value: string | undefined) {
+  return value ? normalizeAdminOpenIds(value.split(",")) : undefined;
+}
+
+function normalizeAdminOpenIds(value: unknown) {
+  if (!Array.isArray(value)) return undefined;
+  const ids = [...new Set(value.filter((item): item is string => typeof item === "string").map((item) => item.trim()).filter(Boolean))];
+  return ids.length ? ids : undefined;
 }
 
 function parseEnvSeconds(value: string | undefined) {

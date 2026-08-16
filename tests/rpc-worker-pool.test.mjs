@@ -67,6 +67,23 @@ test("abort only targets the requested conversation", async () => {
   await Promise.all([a, b]);
 });
 
+test("abort during worker startup prevents the prompt from being submitted", async () => {
+  const startGate = deferred();
+  const client = fakeClient("starting");
+  client.start = async () => {
+    client.calls.push(["start"]);
+    await startGate.promise;
+  };
+  const pool = new FeishuRpcWorkerPool(() => client);
+  const prompt = pool.prompt("chat", { cwd: "a", text: "must-not-run", images: [], timeoutMs: 1000 });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(await pool.abort("chat"), true);
+  startGate.resolve();
+  await assert.rejects(prompt, /cancelled before submission/);
+  assert.equal(client.calls.some(([name]) => name === "prompt"), false);
+});
+
 test("restores only the session assigned to a conversation", async () => {
   const client = fakeClient("a");
   const pool = new FeishuRpcWorkerPool(() => client);

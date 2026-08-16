@@ -64,7 +64,7 @@ export function buildModelCard(key: string, models: any[], currentModel: any) {
     config: sharedCardConfig(),
     header: {
       template: "blue",
-      title: { tag: "plain_text", content: "选择 Pi 模型" },
+      title: { tag: "plain_text", content: "选择 OMP 模型" },
     },
     elements,
   };
@@ -80,7 +80,7 @@ export function buildResumeCard(data: ResumeSessionPage) {
         data.total
           ? `第 **${data.page + 1} / ${data.totalPages}** 页，共 **${data.total}** 条历史会话。`
           : "还没有可切换的历史会话。",
-        "点击某条会话后，当前飞书对话会继续接着这条 Pi 会话往下聊。",
+        "点击某条会话后，当前飞书对话会继续接着这条 OMP 会话往下聊。",
       ].join("\n"),
     },
   ];

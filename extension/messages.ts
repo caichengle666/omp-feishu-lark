@@ -8,6 +8,7 @@ export type BotCommand =
   | { name: "help" }
   | { name: "doctor" }
   | { name: "version" }
+  | { name: "upgrade"; version?: string }
   | { name: "workspace"; path?: string };
 
 type PostBody = {
@@ -97,6 +98,10 @@ export function parseBotCommand(text: string): BotCommand | undefined {
   if (lower === "/feishu help" || lower === "/help") return { name: "help" };
   if (lower === "/feishu doctor" || lower === "/doctor") return { name: "doctor" };
   if (lower === "/feishu version" || lower === "/version") return { name: "version" };
+  const upgradeMatch = trimmed.match(/^\/feishu\s+upgrade(?:\s+(\d+\.\d+\.\d+))?$/i);
+  if (upgradeMatch) {
+    return { name: "upgrade", version: upgradeMatch[1] };
+  }
   const workspaceMatch = trimmed.match(/^\/workspace(?:\s+(.+))?$/si);
   if (workspaceMatch) {
     return { name: "workspace", path: workspaceMatch[1]?.trim() };

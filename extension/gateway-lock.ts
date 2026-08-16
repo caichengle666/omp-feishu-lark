@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { processStartFingerprint } from "../support/feishu-supervisor.mjs";
 import { AGENT_DIR } from "./config.js";
 import { debugLog } from "./debug.js";
 
@@ -134,21 +135,12 @@ function asGatewayOwner(value: unknown): GatewayOwner | undefined {
 
 export function isGatewayOwnerStale(owner: GatewayOwner) {
   if (!isProcessAlive(owner.pid)) return true;
-  if (owner.processStart && processStartFingerprint(owner.pid) !== owner.processStart) return true;
+  if (fingerprintMismatch(owner.processStart, processStartFingerprint(owner.pid))) return true;
   return false;
 }
 
 function isProcessAlive(pid: number) {
   try { process.kill(pid, 0); return true; } catch { return false; }
-}
-
-function processStartFingerprint(pid: number) {
-  if (process.platform !== "linux") return undefined;
-  try {
-    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
-    const closing = stat.lastIndexOf(")");
-    return closing >= 0 ? stat.slice(closing + 2).trim().split(/\s+/)[19] : undefined;
-  } catch { return undefined; }
 }
 
 function randomToken() { return `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`; }
@@ -205,10 +197,14 @@ function isFileLeaseAbandoned(path: string) {
     const owner = JSON.parse(readFileSync(join(path, "owner"), "utf8")) as Partial<LeaseOwner>;
     if (typeof owner.pid !== "number") return Date.now() - statSync(path).mtimeMs > FILE_LOCK_STALE_MS;
     if (!isProcessAlive(owner.pid)) return true;
-    return Boolean(owner.processStart && processStartFingerprint(owner.pid) !== owner.processStart);
+    return fingerprintMismatch(owner.processStart, processStartFingerprint(owner.pid));
   } catch {
     return Date.now() - statSync(path).mtimeMs > FILE_LOCK_STALE_MS;
   }
+}
+
+export function fingerprintMismatch(expected: string | undefined, actual: string | undefined) {
+  return Boolean(expected && actual && actual !== expected);
 }
 
 function sleep(ms: number) { return new Promise((resolve) => setTimeout(resolve, ms)); }

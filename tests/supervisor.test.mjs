@@ -5,7 +5,7 @@ import { join, resolve } from "node:path";
 import { spawn } from "node:child_process";
 import test from "node:test";
 import { EventEmitter } from "node:events";
-import { appendRotatingLog, parseSupervisorArgs, readSupervisorRecord, restartDelay, shouldStopRequested, stopChild, writeStopRequest, writeSupervisorRecord } from "../support/feishu-supervisor.mjs";
+import { appendRotatingLog, parseSupervisorArgs, processStartFingerprint, readSupervisorRecord, recordedProcessStatus, restartDelay, shouldStopRequested, stopChild, writeStopRequest, writeSupervisorRecord } from "../support/feishu-supervisor.mjs";
 
 test("supervisor parses one cross-platform executable and argument array", () => {
   assert.deepEqual(parseSupervisorArgs([
@@ -27,6 +27,16 @@ test("supervisor parses one cross-platform executable and argument array", () =>
 
 test("supervisor restart delay is exponential and capped", () => {
   assert.deepEqual([1, 2, 3, 4, 5, 6, 20].map(restartDelay), [1000, 2000, 4000, 8000, 16000, 30000, 30000]);
+});
+
+test("recorded process identity must match before a process may be signalled", () => {
+  const processStart = processStartFingerprint(process.pid);
+  assert.equal(recordedProcessStatus({ pid: 2_147_483_647, processStart: "dead" }), "dead");
+  assert.equal(recordedProcessStatus({ pid: process.pid }), "unverified");
+  if (processStart) {
+    assert.equal(recordedProcessStatus({ pid: process.pid, processStart }), "match");
+    assert.equal(recordedProcessStatus({ pid: process.pid, processStart: `${processStart}-stale` }), "mismatch");
+  }
 });
 
 test("supervisor rotates daemon logs at the configured size", () => {

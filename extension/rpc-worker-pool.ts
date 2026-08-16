@@ -36,6 +36,8 @@ export type RpcPromptResult = {
 
 export class FeishuRpcWorkerPool {
   private readonly workers = new Map<string, WorkerSlot>();
+  private readonly activePromptKeys = new Set<string>();
+  private readonly abortRequested = new Set<string>();
   private readonly capacityWaiters: Array<() => void> = [];
   private workerReservations = 0;
 
@@ -45,7 +47,15 @@ export class FeishuRpcWorkerPool {
   ) {}
 
   async prompt(key: string, options: RpcPromptOptions): Promise<RpcPromptResult> {
-    const slot = await this.ensureWorker(key, options.cwd, options.sessionFile);
+    this.activePromptKeys.add(key);
+    let slot: WorkerSlot;
+    try {
+      slot = await this.ensureWorker(key, options.cwd, options.sessionFile);
+    } catch (error) {
+      this.activePromptKeys.delete(key);
+      this.abortRequested.delete(key);
+      throw error;
+    }
     slot.busy = true;
     let unsubscribe = () => {};
     try {
@@ -56,6 +66,7 @@ export class FeishuRpcWorkerPool {
         options.onSessionEvent?.(initialState.sessionId, event);
       });
       if (options.model) await slot.client.setModel(options.model.provider, options.model.id);
+      if (this.abortRequested.has(key)) throw new Error("Prompt cancelled before submission");
       await slot.client.promptAndWait(options.text, options.images.length ? options.images : undefined, options.timeoutMs);
       const [text, state, messages] = await Promise.all([
         slot.client.getLastAssistantText(),
@@ -78,14 +89,23 @@ export class FeishuRpcWorkerPool {
       unsubscribe();
       slot.busy = false;
       slot.lastUsedAt = Date.now();
+      this.activePromptKeys.delete(key);
+      this.abortRequested.delete(key);
       this.releaseCapacityWaiter();
     }
   }
 
   async abort(key: string): Promise<boolean> {
+    if (!this.activePromptKeys.has(key)) return false;
+    this.abortRequested.add(key);
     const slot = this.workers.get(key);
-    if (!slot || !slot.busy) return false;
-    await slot.client.abort();
+    if (slot?.busy) {
+      try {
+        await slot.client.abort();
+      } catch {
+        await this.dropWorker(key, slot);
+      }
+    }
     return true;
   }
 

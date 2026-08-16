@@ -1,5 +1,5 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { spawn, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { dirname } from "node:path";
 
 export function restartDelay(failures) {
@@ -83,12 +83,44 @@ export function processStartFingerprint(pid) {
         timeout: 3_000,
       });
       const match = /CreationDate=(\d{14})/.exec(result.stdout || "");
-      return match ? match[1] : undefined;
+      if (match) return match[1];
+    } catch {
+      // WMIC is absent on newer Windows installations; use CIM below.
+    }
+    try {
+      const script = `(Get-CimInstance Win32_Process -Filter \"ProcessId = ${pid}\" -ErrorAction SilentlyContinue).CreationDate.ToUniversalTime().Ticks`;
+      const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {
+        encoding: "utf8",
+        windowsHide: true,
+        timeout: 3_000,
+      });
+      const value = (result.stdout || "").trim();
+      return /^\d+$/.test(value) ? value : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+  if (process.platform === "darwin") {
+    try {
+      const result = spawnSync("ps", ["-o", "lstart=", "-p", String(pid)], {
+        encoding: "utf8",
+        timeout: 3_000,
+      });
+      const value = (result.stdout || "").trim().replace(/\s+/g, " ");
+      return value || undefined;
     } catch {
       return undefined;
     }
   }
   return undefined;
+}
+
+export function recordedProcessStatus(record) {
+  if (!record?.pid || !processAlive(record.pid)) return "dead";
+  if (!record.processStart) return "unverified";
+  const fingerprint = processStartFingerprint(record.pid);
+  if (!fingerprint) return "unverified";
+  return fingerprint === record.processStart ? "match" : "mismatch";
 }
 
 export function isSupervisorProcessAlive(record) {
@@ -126,16 +158,34 @@ export function shouldStopRequested(path, record) {
 
 export async function stopChild(daemon, log = () => {}, signal = "SIGTERM") {
   if (!daemon || daemon.exitCode !== null) return;
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const waitExit = (ms) => {
+    // Race: the child may exit before we register the listener (common when
+    // it's already winding down). Check the captured exit code first so an
+    // already-exited child resolves immediately instead of waiting out the
+    // full window.
+    if (daemon.exitCode !== null) return Promise.resolve();
+    const { promise, resolve } = Promise.withResolvers();
+    daemon.once("exit", () => resolve());
+    const timer = setTimeout(() => resolve(), ms);
+    promise.finally(() => clearTimeout(timer));
+    return promise;
+  };
   try { daemon.stdin?.end(); } catch {}
   try { daemon.kill(signal === "SIGINT" ? "SIGINT" : "SIGTERM"); } catch {}
-  await Promise.race([new Promise((resolve) => daemon.once("exit", resolve)), sleep(5000)]);
+  await waitExit(5000);
   if (daemon.exitCode === null) {
     try { daemon.kill("SIGKILL"); } catch {}
-    await Promise.race([new Promise((resolve) => daemon.once("exit", resolve)), sleep(5000)]);
+    await waitExit(5000);
   }
   if (daemon.exitCode === null) {
-    log(`daemon ${daemon.pid} did not exit after SIGKILL; retaining supervisor ownership`);
-    await new Promise((resolve) => daemon.once("exit", resolve));
+    // Never block the supervisor on a stubborn daemon: a zombie child would
+    // otherwise wedge stop() forever (kill -9 cannot reap an uninterruptible
+    // process), leaving upgrade/restart loops spinning. Log and move on; the
+    // gateway lock's stale-owner detection recovers ownership once the old
+    // process actually dies.
+    log(`daemon ${daemon.pid} did not exit after SIGKILL; releasing supervisor without waiting`);
+    await waitExit(1000);
   }
 }
 
@@ -182,10 +232,33 @@ export async function runSupervisor(argv = process.argv.slice(2)) {
     await stopChild(child, log, signal);
   };
 
-  process.on("SIGINT", () => { void stop("SIGINT"); });
-  process.on("SIGTERM", () => { void stop("SIGTERM"); });
+  const traceStopSource = (signal) => {
+    try {
+      const ppid = process.ppid;
+      let parent = "(unknown)";
+      try { parent = execFileSync("ps", ["-o", "comm=", "-p", String(ppid)], { encoding: "utf8" }).trim(); } catch {}
+      let stopFile = "";
+      try { stopFile = readFileSync(stopPath, "utf8").trim(); } catch {}
+      log(`stop requested via ${signal}; ppid=${ppid} (${parent})${stopFile ? ` stopFile=${stopFile}` : ""}`);
+      // Snapshot every process that could be involved so the next stop is
+      // attributable even without auditd: list our own pid file record, all
+      // feishu-supervisor/omp --mode rpc processes and their start times.
+      try {
+        const psOut = execFileSync("ps", ["-eo", "pid,ppid,etime,args"], { encoding: "utf8", maxBuffer: 1024 * 1024 });
+        const relevant = psOut.split("\n").filter((line) => /feishu-supervisor|omp --mode rpc/.test(line));
+        log(`process snapshot at stop:\n${relevant.join("\n")}`);
+      } catch {}
+    } catch (error) {
+      log(`stop requested via ${signal}; trace failed: ${error instanceof Error ? error.message : error}`);
+    }
+  };
+  process.on("SIGINT", () => { traceStopSource("SIGINT"); void stop("SIGINT"); });
+  process.on("SIGTERM", () => { traceStopSource("SIGTERM"); void stop("SIGTERM"); });
   const stopPoll = setInterval(() => {
-    if (shouldStopRequested(stopPath, supervisorRecord)) void stop("SIGTERM");
+    if (shouldStopRequested(stopPath, supervisorRecord)) {
+      traceStopSource("stopfile");
+      void stop("SIGTERM");
+    }
   }, 200);
 
   try {
