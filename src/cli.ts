@@ -9,7 +9,7 @@ import { isSupervisorProcessAlive, readSupervisorRecord, recordedProcessStatus, 
 import { GATEWAY_LOCK_KEY, parseLocksFile, removeGatewayLockKey } from "./installer-state.js";
 import { cleanupLegacyInstallations } from "./legacy-cleanup.js";
 import { verifyRpcWorkerReady } from "./rpc-self-test.js";
-import { bunDnsArgs, resolveUpgradeNetworkPolicy, upgradeTimeoutMs } from "../extension/upgrade.js";
+import { bunDnsArgs, resolveUpgradeNetworkPolicy, upgradeNetworkAttempts, upgradeTimeoutMs } from "../extension/upgrade.js";
 
 const isWindows = process.platform === "win32";
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -203,16 +203,24 @@ writeFileSync(stagingPackagePath, `${JSON.stringify({
 }, null, 2)}\n`);
 const pluginPackagePath = stagingPackagePath;
 info("installing plugin runtime dependencies...");
-const installed = spawnSync(bunBin, [...dnsArgs, "install", "--production", "--no-save"], {
-  cwd: stagingDir,
-  stdio: "inherit",
-  timeout: upgradeTimeoutMs(process.env.OMP_FEISHU_UPGRADE_TIMEOUT_SEC),
-  killSignal: "SIGKILL",
-});
-if (installed.status !== 0) {
+const installFailures: string[] = [];
+let dependenciesInstalled = false;
+for (const attemptArgs of upgradeNetworkAttempts(networkPolicy, dnsArgs)) {
+  const installed = spawnSync(bunBin, [...attemptArgs, "install", "--production", "--no-save"], {
+    cwd: stagingDir,
+    stdio: "inherit",
+    timeout: upgradeTimeoutMs(process.env.OMP_FEISHU_UPGRADE_TIMEOUT_SEC),
+    killSignal: "SIGKILL",
+  });
+  if (installed.status === 0) {
+    dependenciesInstalled = true;
+    break;
+  }
+  installFailures.push(installed.error?.message || installed.signal || `exit ${installed.status ?? "unknown"}`);
+}
+if (!dependenciesInstalled) {
   removeDirectory(stagingDir);
-  const reason = installed.error?.message || installed.signal || `exit ${installed.status ?? "unknown"}`;
-  fail(`Could not install plugin runtime dependencies (network=${networkPolicy}, ${reason}). Set OMP_FEISHU_NETWORK=ipv4 or ipv6 if this device has broken dual-stack DNS.`);
+  fail(`Could not install plugin runtime dependencies (network=${networkPolicy}, ${installFailures.join(" | ")}). Set OMP_FEISHU_NETWORK=ipv4 or ipv6 if this device has broken dual-stack DNS.`);
 }
 ok("Plugin dependencies ready");
 

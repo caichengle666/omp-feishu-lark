@@ -39,7 +39,8 @@ test("provider and RPC failures are classified for Feishu users", () => {
   assert.match(formatUserFacingError("upstream returned 524"), /上游模型服务超时（HTTP 524）/);
   assert.match(formatUserFacingError("Timeout collecting events. Stderr:"), /OMP 等待模型事件超时/);
   assert.match(formatUserFacingError("HTTP 503 unavailable"), /模型服务错误（HTTP 503）/);
-  assert.equal(formatUserFacingError("session crashed"), "OMP error: session crashed");
+  assert.match(formatUserFacingError("session crashed at /private/path"), /OMP 执行失败/);
+  assert.doesNotMatch(formatUserFacingError("session crashed at /private/path"), /private\/path/);
 });
 
 test("stopConversation rejects a stale task card", async () => {

@@ -89,3 +89,18 @@ test("does not dispatch bot-authored replay events", async () => {
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(calls, 0);
 });
+
+test("WS card actions return a card update without issuing a second update request", async () => {
+  let updateCalls = 0;
+  const transport = new FeishuTransport({ appId: "test-app", appSecret: "test-secret", domain: "feishu", groupPolicy: "open" }, async () => undefined, async () => ({ header: { title: "updated" } }));
+  transport.updateCard = async () => { updateCalls += 1; };
+
+  const result = await transport.handleCardAction({
+    context: { open_message_id: "om_card", open_chat_id: "oc_card" },
+    operator: { open_id: "ou_user" },
+    action: { value: { action: "test" } },
+  });
+
+  assert.deepEqual(result, { card: { type: "raw", data: { header: { title: "updated" } } } });
+  assert.equal(updateCalls, 0);
+});

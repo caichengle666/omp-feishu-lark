@@ -705,7 +705,7 @@ export function formatUserFacingError(error: unknown) {
   if (serverStatus) {
     return `模型服务错误（HTTP ${serverStatus}）：上游服务暂时不可用，请稍后重试或切换模型。`;
   }
-  return `OMP error: ${raw}`;
+  return "OMP 执行失败，请稍后重试。运行 /feishu debug 可查看诊断日志；管理员也可运行 /feishu doctor。";
 }
 
 function resolveWorkspacePath(input: string) {

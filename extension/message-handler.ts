@@ -1,6 +1,6 @@
 import { detectCodeLanguage, decodeTextFile, detectImageMime, type FeishuImageInput, isSupportedImageMime, isSupportedTextFile } from "./attachments.js";
 import { buildModelCard, buildResumeCard } from "./cards.js";
-import type { ConversationManager } from "./conversation-manager.js";
+import { formatUserFacingError, type ConversationManager } from "./conversation-manager.js";
 import { claimFeishuMessage, markFeishuMessage } from "./dedupe-store.js";
 import { debugLog } from "./debug.js";
 import { conversationKey, conversationLabel, normalizeForDedupe, parseBotCommand, parseMessageInput, pruneRecentMap } from "./messages.js";
@@ -132,7 +132,7 @@ export class FeishuMessageHandler {
       const message = error instanceof Error ? error.message : String(error);
       debugLog("feishu.handler.error", { messageId: msg.messageId, error: message });
       await markFeishuMessage(msg.messageId, "failed", message);
-      await this.getTransport()?.replyText(msg.messageId, `OMP error: ${message}`);
+      await this.getTransport()?.replyText(msg.messageId, formatUserFacingError(message));
       debugLog("feishu.message.failed", { messageId: msg.messageId, latencyMs: Date.now() - startedAt });
     }
   }

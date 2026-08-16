@@ -263,6 +263,7 @@ test("installs and manages the proactive notification webhook", () => {
   assert.ok(installedExtensionFiles.includes("help.ts"));
   assert.match(installerSource, /const extensionFiles = readdirSync/);
   assert.match(installerSource, /file\.endsWith\("\.ts"\)/);
+  assert.match(installerSource, /upgradeNetworkAttempts\(networkPolicy, dnsArgs\)/);
 });
 
 test("notifies an interactive OMP session when gateway ownership is lost", () => {

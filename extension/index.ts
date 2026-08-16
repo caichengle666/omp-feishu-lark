@@ -416,7 +416,7 @@ export default function feishuExtension(pi: ExtensionAPI) {
 
   async function deliverUpgradeNotice() {
     if (!existsSync(UPGRADE_NOTICE_PATH) || !transport) return;
-    const notice = JSON.parse(readFileSync(UPGRADE_NOTICE_PATH, "utf8")) as UpgradeNotice;
+    const notice = readJson<UpgradeNotice>(UPGRADE_NOTICE_PATH, {});
     if (!notice.from || !notice.to) return;
     const targets = notice.targets?.length
       ? notice.targets

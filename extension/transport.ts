@@ -77,7 +77,7 @@ export class FeishuTransport {
     // Optional webhook server as a backup delivery channel (only used when
     // the developer console is explicitly configured for webhook delivery).
     if (this.cardActionMode() === "webhook") {
-      this.cardActionWebhook = new FeishuCardActionWebhook(this.config, async (action) => this.handleCardActionAction(action, "webhook"));
+      this.cardActionWebhook = new FeishuCardActionWebhook(this.config, async (action) => this.handleCardActionAction(action));
       await this.cardActionWebhook.start();
       debugLog("feishu.card.webhook.endpoint", {
         endpoint: this.cardActionWebhook.getEndpointLabel(),
@@ -224,13 +224,13 @@ export class FeishuTransport {
       hasToken: Boolean(data?.token),
       value: data?.action?.value,
     });
-    const result = await this.handleCardActionAction({
+    const result = await this.onCardAction({
       messageId,
       chatId,
       operatorOpenId,
       token: typeof data?.token === "string" ? data.token : undefined,
       value: data?.action?.value,
-    }, "ws");
+    });
     // The WSClient sends the return value back to the Feishu platform as
     // the card callback response. It must use the wrapped format:
     //   { "card": { "type": "raw", "data": { ... card JSON ... } } }
@@ -240,12 +240,8 @@ export class FeishuTransport {
     return result;
   }
 
-  private async handleCardActionAction(action: FeishuCardAction, mode: "ws" | "webhook") {
-    const result = await this.onCardAction(action);
-    if (mode === "ws" && result) {
-      await this.updateCard(action.messageId, result);
-    }
-    return result;
+  private async handleCardActionAction(action: FeishuCardAction) {
+    return await this.onCardAction(action);
   }
 
   private cardActionMode() {

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync, chmodSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, chmodSync, renameSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { CardActionMode, Domain, FeishuConfig, GroupPolicy } from "./types.js";
@@ -53,18 +53,30 @@ export function readJson<T>(path: string, fallback: T): T {
   try {
     return JSON.parse(readFileSync(path, "utf8")) as T;
   } catch {
+    backupCorruptJson(path);
     return fallback;
   }
 }
 
 export function writeJson(path: string, value: unknown) {
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, "utf8");
-  try { chmodSync(path, 0o600); } catch {}
+  const temporaryPath = `${path}.tmp-${process.pid}-${Date.now()}`;
+  try {
+    writeFileSync(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+    renameSync(temporaryPath, path);
+    try { chmodSync(path, 0o600); } catch {}
+  } finally {
+    try { rmSync(temporaryPath, { force: true }); } catch {}
+  }
 }
 
 export function removePath(path: string) {
   rmSync(path, { recursive: true, force: true });
+}
+
+function backupCorruptJson(path: string) {
+  const backup = `${path}.corrupt-${Date.now()}`;
+  try { renameSync(path, backup); } catch {}
 }
 
 export function loadConfig(): FeishuConfig | undefined {
