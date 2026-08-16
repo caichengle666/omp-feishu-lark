@@ -305,13 +305,15 @@ export function buildTaskStatusCard(input: { key: string; status: TaskStatus; ph
   };
 }
 
-export function parseStopTaskActionValue(value: unknown): { key: string; runId?: string } | undefined {
+export function parseStopTaskActionValue(value: unknown): { key: string; runId?: string; ownerOpenId?: string; chatId?: string } | undefined {
   if (!value || typeof value !== "object") return undefined;
   const raw = value as any;
   if (raw.action !== STOP_ACTION || typeof raw.key !== "string") return undefined;
   return {
     key: raw.key,
     runId: typeof raw.runId === "string" ? raw.runId : undefined,
+    ownerOpenId: typeof raw.ownerOpenId === "string" ? raw.ownerOpenId : undefined,
+    chatId: typeof raw.chatId === "string" ? raw.chatId : undefined,
   };
 }
 
