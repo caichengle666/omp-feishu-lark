@@ -126,20 +126,32 @@ test("workspace changes require an administrator in p2p and group chats", async 
   assert.match(replies[1], /切换工作区需要管理员权限/);
 });
 
-test("group resume requires an administrator", async () => {
+test("group state-changing commands require an administrator", async () => {
   const replies = [];
+  let newConversation = false;
   let listed = false;
+  let stopped = false;
+  let listedModels = false;
   const transport = { replyText: async (_messageId, text) => { replies.push(text); } };
   const groupMessage = { ...message, chatType: "group" };
   const handler = new FeishuMessageHandler({
+    newConversation: async () => { newConversation = true; },
     listResumeSessions: async () => { listed = true; return {}; },
+    stopConversation: async () => { stopped = true; },
+    getAvailableModels: async () => { listedModels = true; return []; },
   }, () => transport, undefined, {
     isAdmin: () => false,
   });
 
+  assert.equal(await handler.handleCommand(groupMessage, "group:oc_chat", "/new"), true);
+  assert.equal(await handler.handleCommand(groupMessage, "group:oc_chat", "/model"), true);
   assert.equal(await handler.handleCommand(groupMessage, "group:oc_chat", "/resume"), true);
+  assert.equal(await handler.handleCommand(groupMessage, "group:oc_chat", "/stop"), true);
+  assert.equal(newConversation, false);
+  assert.equal(listedModels, false);
   assert.equal(listed, false);
-  assert.match(replies[0], /群聊恢复历史会话需要管理员权限/);
+  assert.equal(stopped, false);
+  assert.deepEqual(replies.map((text) => text.includes("管理员权限")), [true, true, true, true]);
 });
 
 test("remote upgrade displays a countdown card and updates its phase", async () => {

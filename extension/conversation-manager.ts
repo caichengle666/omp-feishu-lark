@@ -91,6 +91,7 @@ export class ConversationManager {
     onReply: (text: string) => Promise<void>,
     status?: TaskStatusSink,
   ) {
+    if (this.activeRuns.has(key)) void status?.setPhase?.("正在排队等待上一项任务完成");
     if (this.rpcWorkers) return this.promptWithRpcWorker(key, userText, images, onReply, status);
     const previous = this.previousTurn(key);
     const next = previous.then(async () => {

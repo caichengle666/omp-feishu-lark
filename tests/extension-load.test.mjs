@@ -243,6 +243,7 @@ test("exposes doctor/version commands to Feishu messages as well as OMP", () => 
 test("exposes the shared Chinese help command in OMP and Feishu", () => {
   const messagesSource = readFileSync(join(repoRoot, "extension", "messages.ts"), "utf8");
   const handlerSource = readFileSync(join(repoRoot, "extension", "message-handler.ts"), "utf8");
+  const conversationSource = readFileSync(join(repoRoot, "extension", "conversation-manager.ts"), "utf8");
   const helpSource = readFileSync(join(repoRoot, "extension", "help.ts"), "utf8");
   assert.match(messagesSource, /\/feishu help/);
   assert.match(handlerSource, /command\.name === "help"/);
@@ -250,6 +251,9 @@ test("exposes the shared Chinese help command in OMP and Feishu", () => {
   assert.match(helpSource, /\/workspace PATH - 切换当前聊天的工作目录/);
   assert.match(helpSource, /\/feishu config - 查看脱敏配置/);
   assert.match(helpSource, /\/send PATH - 发送当前工作区内的文件或图片/);
+  assert.match(helpSource, /\/new - 新建当前飞书会话（群聊需管理员）/);
+  assert.match(helpSource, /\/model - 选择当前聊天使用的模型（群聊需管理员）/);
+  assert.match(conversationSource, /正在排队等待上一项任务完成/);
 });
 
 test("installs and manages the proactive notification webhook", () => {

@@ -146,6 +146,7 @@ export class FeishuMessageHandler {
     if (!transport) return true;
 
     if (command.name === "new") {
+      if (await this.requireGroupAdmin(msg, transport, "新建会话")) return true;
       await this.conversations.newConversation(key, async (reply) => {
         await transport.replyText(msg.messageId, reply);
       });
@@ -153,6 +154,7 @@ export class FeishuMessageHandler {
     }
 
     if (command.name === "model") {
+      if (await this.requireGroupAdmin(msg, transport, "切换模型")) return true;
       debugLog("feishu.command.model.start", { messageId: msg.messageId, key });
       const models = await this.conversations.getAvailableModels();
       debugLog("feishu.command.model.models_loaded", { messageId: msg.messageId, key, count: models.length });
@@ -167,16 +169,14 @@ export class FeishuMessageHandler {
     }
 
     if (command.name === "resume") {
-      if (msg.chatType === "group" && !this.diagnostics?.isAdmin?.(msg.senderOpenId)) {
-        await transport.replyText(msg.messageId, "群聊恢复历史会话需要管理员权限。");
-        return true;
-      }
+      if (await this.requireGroupAdmin(msg, transport, "恢复历史会话")) return true;
       const page = await this.conversations.listResumeSessions(key, "current", 0);
       await transport.replyCard(msg.messageId, buildResumeCard(page, msg.senderOpenId, msg.chatId));
       return true;
     }
 
     if (command.name === "stop") {
+      if (await this.requireGroupAdmin(msg, transport, "停止任务")) return true;
       await this.conversations.stopConversation(key, async (reply) => {
         await transport.replyText(msg.messageId, reply);
       });
@@ -326,6 +326,12 @@ export class FeishuMessageHandler {
     this.recentContent.set(contentKey, now);
     if (this.recentContent.size > 2000) pruneRecentMap(this.recentContent, now, CONTENT_DEDUPE_TTL_MS);
     return false;
+  }
+
+  private async requireGroupAdmin(msg: FeishuMessage, transport: FeishuTransport, action: string) {
+    if (msg.chatType !== "group" || this.diagnostics?.isAdmin?.(msg.senderOpenId)) return false;
+    await transport.replyText(msg.messageId, `群聊${action}需要管理员权限。请让管理员执行，或在私聊中使用此命令。`);
+    return true;
   }
 
   private async processAttachments(

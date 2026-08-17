@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildTaskStatusCard, describePiEvent, parseStopTaskActionValue } from "../extension/task-status-card.ts";
+import { buildTaskStatusCard, describePiEvent, parseStopTaskActionValue, TaskStatusCard } from "../extension/task-status-card.ts";
 import { isAuthorizedCardAction, parseModelActionValue, parseResumeSelectActionValue } from "../extension/cards.ts";
 
 test("task status card shows truthful runtime and tool usage", () => {
@@ -18,6 +18,19 @@ test("task status card shows truthful runtime and tool usage", () => {
   assert.match(text, /已运行：1分23秒/);
   assert.match(text, /工具调用：4 次/);
   assert.match(text, /当前工具：read/);
+});
+
+test("task status card shows a queued phase before OMP begins execution", async () => {
+  const updates = [];
+  const card = new TaskStatusCard("p2p:ou_user", "om_source", {
+    replyCard: async () => "om_progress",
+    updateCard: async (_messageId, next) => { updates.push(next); },
+    replyLocalFile: async () => undefined,
+  });
+
+  await card.start();
+  await card.setPhase("正在排队等待上一项任务完成");
+  assert.match(JSON.stringify(updates.at(-1)), /正在排队等待上一项任务完成/);
 });
 
 test("card actions are bound to the originating Feishu user and chat", () => {

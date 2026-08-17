@@ -7,6 +7,7 @@ export type TaskStatus = "running" | "done" | "failed" | "stopped" | "inactive";
 export type TaskStatusSink = {
   readonly runId: string;
   updateFromEvent(event: unknown): void;
+  setPhase?(phase: string): Promise<void>;
   stopImmediately(phase?: string): Promise<void>;
   finish(status: Exclude<TaskStatus, "running" | "inactive">, phase?: string): Promise<void>;
 };
@@ -87,6 +88,16 @@ export class TaskStatusCard implements TaskStatusSink {
     const phase = describePiEvent(event);
     if (!phase) return;
     void this.updateRunningPhase(phase);
+  }
+
+  async setPhase(phase: string) {
+    if (this.status !== "running") return;
+    const next = normalizePhase(phase);
+    if (!next || next === this.phase) return;
+    this.pendingRunningPhase = undefined;
+    this.phase = next;
+    this.lastRunningUpdateAt = Date.now();
+    await this.patch(this.buildCard("running", this.phase), { version: this.version });
   }
 
   async stopImmediately(phase = "用户已停止任务") {
