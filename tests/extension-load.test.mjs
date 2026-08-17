@@ -174,7 +174,8 @@ test("resolves RPC workers from a stable OMP CLI path", () => {
   assert.match(installerSource, /entry\.launchToken === launchToken/);
   assert.match(installerSource, /Existing Feishu supervisor.*did not stop/);
   assert.match(installerSource, /const daemonExecutable = bunBin;/);
-  assert.match(installerSource, /\[ompBin, \.\.\.daemonArgs\]/);
+  assert.match(installerSource, /const daemonLaunchArgs = \[rpcOmpCli, \.\.\.daemonArgs\]/);
+  assert.doesNotMatch(installerSource, /compatibleOmpCli \? \[compatibleOmpCli, \.\.\.daemonArgs\] : \[ompBin, \.\.\.daemonArgs\]/);
 });
 
 test("passes the resolved model into the Feishu OMP session without awaiting its own cache", () => {

@@ -1,7 +1,7 @@
 import { loadConfig } from "./config.js";
 import { debugLog } from "./debug.js";
 import type { FeishuRoute } from "./types.js";
-import type { FeishuTransport } from "./transport.js";
+import { configureSdkRestTimeout, type FeishuTransport } from "./transport.js";
 import { buildMarkdownCards, buildPostMessages, chooseMessageMode } from "./rich-text.js";
 import type { Client } from "@larksuiteoapi/node-sdk";
 
@@ -38,6 +38,7 @@ export class FeishuDelivery {
       domain,
       loggerLevel: lark.LoggerLevel.error,
     });
+    configureSdkRestTimeout(this.sdkClient);
   }
 
   private async replyText(messageId: string, text: string) {

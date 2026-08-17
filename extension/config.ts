@@ -51,7 +51,8 @@ export function ensureRoot() {
 export function readJson<T>(path: string, fallback: T): T {
   if (!existsSync(path)) return fallback;
   try {
-    return JSON.parse(readFileSync(path, "utf8")) as T;
+    const raw = readFileSync(path, "utf8");
+    return JSON.parse(raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw) as T;
   } catch {
     backupCorruptJson(path);
     return fallback;

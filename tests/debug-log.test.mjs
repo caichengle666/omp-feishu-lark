@@ -12,6 +12,7 @@ test("debug logging batches writes and flushes complete JSON lines", () => {
     'import { debugLog, flushDebugLog } from "./extension/debug.ts";',
     'debugLog("test.one", { value: 1 });',
     'debugLog("test.two", { value: 2 });',
+    'debugLog("test.secret", { content: "do-not-persist", token: "token-value" });',
     'await flushDebugLog();',
   ].join(" ");
   const result = spawnSync(process.execPath, ["-e", script], {
@@ -21,6 +22,8 @@ test("debug logging batches writes and flushes complete JSON lines", () => {
   });
   assert.equal(result.status, 0, result.stderr);
   const lines = readFileSync(join(root, "debug.log"), "utf8").trim().split("\n").map(JSON.parse);
-  assert.deepEqual(lines.map((entry) => entry.event), ["test.one", "test.two"]);
+  assert.deepEqual(lines.map((entry) => entry.event), ["test.one", "test.two", "test.secret"]);
+  assert.equal(JSON.stringify(lines).includes("do-not-persist"), false);
+  assert.equal(JSON.stringify(lines).includes("token-value"), false);
   rmSync(root, { recursive: true, force: true });
 });

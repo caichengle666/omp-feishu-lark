@@ -260,7 +260,7 @@ mkdirSync(runtimeDir, { recursive: true });
 const logPath = join(runtimeDir, "daemon.log");
 const daemonArgs = ["--mode", "rpc", "--no-extensions", "--no-skills", "--allow-home", "--cwd", workspace, "-e", join(pluginDir, "extension", "index.ts")];
 const daemonExecutable = bunBin;
-const daemonLaunchArgs = compatibleOmpCli ? [compatibleOmpCli, ...daemonArgs] : [ompBin, ...daemonArgs];
+const daemonLaunchArgs = [rpcOmpCli, ...daemonArgs];
 const launchToken = `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 const launched = spawn(bunBin, [
   join(pluginDir, "support", "feishu-supervisor.mjs"),
@@ -504,7 +504,7 @@ async function restartRestoredDaemon() {
     const restoredManifest = JSON.parse(readFileSync(join(pluginDir, "package.json"), "utf8")) as { version?: string };
     const launchToken = `${process.pid}-rollback-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const daemonArgs = ["--mode", "rpc", "--no-extensions", "--no-skills", "--allow-home", "--cwd", workspace, "-e", join(pluginDir, "extension", "index.ts")];
-    const daemonLaunchArgs = compatibleOmpCli ? [compatibleOmpCli, ...daemonArgs] : [ompBin, ...daemonArgs];
+    const daemonLaunchArgs = [rpcOmpCli, ...daemonArgs];
     const launched = spawn(bunBin, [
       join(pluginDir, "support", "feishu-supervisor.mjs"),
       "--cwd", workspace,

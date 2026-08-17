@@ -13,11 +13,13 @@ test("backs up malformed state JSON and atomically writes its replacement", () =
     'import { join } from "node:path";',
     'import { readJson, writeJson } from "./extension/config.ts";',
     'const path = join(process.env.OMP_FEISHU_ROOT, "state.json");',
+    'writeFileSync(path, "\\ufeff" + JSON.stringify({ sessions: { "p2p:bom": "session.jsonl" } }));',
+    'if (readJson(path, { sessions: {} }).sessions["p2p:bom"] !== "session.jsonl") process.exit(2);',
     'writeFileSync(path, "{invalid");',
-    'if (readJson(path, { sessions: {} }).sessions === undefined) process.exit(2);',
+    'if (readJson(path, { sessions: {} }).sessions === undefined) process.exit(3);',
     'writeJson(path, { sessions: { "p2p:test": "session.jsonl" } });',
-    'if (!existsSync(path)) process.exit(3);',
-    'if (JSON.parse(readFileSync(path, "utf8")).sessions["p2p:test"] !== "session.jsonl") process.exit(4);',
+    'if (!existsSync(path)) process.exit(4);',
+    'if (JSON.parse(readFileSync(path, "utf8")).sessions["p2p:test"] !== "session.jsonl") process.exit(5);',
   ].join(" ");
 
   try {

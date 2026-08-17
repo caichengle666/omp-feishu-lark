@@ -174,7 +174,7 @@ export class FeishuTransport {
       hasRootId: Boolean(message.root_id),
       hasParentId: Boolean(message.parent_id),
       hasThreadId: Boolean(message.thread_id),
-      content: message.content || "",
+      contentLength: typeof message.content === "string" ? message.content.length : 0,
     });
 
     if (message.chat_type === "group" && this.config.groupPolicy === "mention") {

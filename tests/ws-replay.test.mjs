@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { defaultHttpInstance } from "@larksuiteoapi/node-sdk";
 import { configureSdkRestTimeout, createWsReadyGate, FeishuTransport } from "../extension/transport.ts";
@@ -8,6 +9,11 @@ test("configures a finite timeout for every SDK REST request", () => {
   const client = { httpInstance: { defaults: { timeout: 0 } } };
   configureSdkRestTimeout(client, 15_000);
   assert.equal(client.httpInstance.defaults.timeout, 15_000);
+});
+
+test("direct notification delivery applies the same SDK REST timeout", () => {
+  const source = readFileSync(new URL("../extension/delivery.ts", import.meta.url), "utf8");
+  assert.match(source, /configureSdkRestTimeout\(this\.sdkClient\)/);
 });
 
 test("SDK REST timeout aborts a real stalled HTTP request", async () => {
