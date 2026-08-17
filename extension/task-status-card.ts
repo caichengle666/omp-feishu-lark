@@ -14,6 +14,7 @@ export type TaskStatusSink = {
 
 type TaskStatusTransport = {
   replyCard(messageId: string, card: object): Promise<string | undefined>;
+  replyText?(messageId: string, text: string): Promise<void>;
   updateCard(messageId: string, card: object): Promise<void>;
   replyLocalFile(messageId: string, filePath: string): Promise<{ kind: "image" | "file"; fileName: string } | undefined>;
 };
@@ -145,6 +146,18 @@ export class TaskStatusCard implements TaskStatusSink {
       }
     }
     debugLog("feishu.task_status.artifacts_done", { key: this.key, runId: this.runId, total: filePaths.length, sentCount, failedCount });
+    if (failedCount > 0) {
+      await this.transport.replyText?.(
+        this.replyToMessageId,
+        `任务已完成，但有 ${failedCount} 个生成文件未能发送。请检查文件大小和飞书机器人文件权限，必要时使用 /send 文件路径重试。`,
+      ).catch((error) => {
+        debugLog("feishu.task_status.artifact_failure_notice_error", {
+          key: this.key,
+          runId: this.runId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+    }
   }
 
   private updateRunningPhase(phase: string) {

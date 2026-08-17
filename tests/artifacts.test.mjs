@@ -233,6 +233,33 @@ test("TaskStatusCard does not send artifacts when the task fails", async () => {
   }
 });
 
+test("TaskStatusCard tells the user when automatic artifact delivery fails", async () => {
+  const root = tempRoot();
+  try {
+    const workspace = join(root, "workspace");
+    const imagePath = join(root, "tmp", "chart.png");
+    writeFileSync(imagePath, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00]));
+    const notices = [];
+    const transport = {
+      replyCard: async () => "card_1",
+      replyText: async (_messageId, text) => { notices.push(text); },
+      updateCard: async () => {},
+      replyLocalFile: async () => { throw new Error("upload failed"); },
+    };
+
+    const card = new TaskStatusCard("p2p:ou_test", "om_notice", transport, workspace);
+    card.updateFromEvent(imageEvent("generate_image", [imagePath]));
+    await card.start();
+    await card.finish("done");
+
+    assert.equal(notices.length, 1);
+    assert.match(notices[0], /1 个生成文件未能发送/);
+    assert.match(notices[0], /\/send/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("TaskStatusCard limits automatic artifact delivery to ten files", async () => {
   const root = tempRoot();
   try {
