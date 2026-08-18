@@ -15,7 +15,12 @@ export type BotCommand =
   | { name: "refresh" }
   | { name: "config" }
   | { name: "send"; path?: string }
-  | { name: "workspace"; path?: string };
+  | { name: "workspace"; path?: string }
+  | { name: "pluginStart" }
+  | { name: "pluginStop" }
+  | { name: "pluginRestart" }
+  | { name: "autostart" }
+  | { name: "reset" };
 
 type PostBody = {
   title?: string;
@@ -105,6 +110,11 @@ export function parseBotCommand(text: string): BotCommand | undefined {
   if (lower === "/feishu doctor" || lower === "/doctor") return { name: "doctor" };
   if (lower === "/feishu version" || lower === "/version") return { name: "version" };
   if (lower === "/feishu setup") return { name: "setup" };
+  if (lower === "/feishu start") return { name: "pluginStart" };
+  if (lower === "/feishu stop") return { name: "pluginStop" };
+  if (lower === "/feishu restart") return { name: "pluginRestart" };
+  if (lower === "/feishu autostart") return { name: "autostart" };
+  if (lower === "/feishu reset") return { name: "reset" };
   const upgradeMatch = trimmed.match(/^\/feishu\s+upgrade(?:\s+(\d+\.\d+\.\d+))?$/i);
   if (upgradeMatch) {
     return { name: "upgrade", version: upgradeMatch[1] };

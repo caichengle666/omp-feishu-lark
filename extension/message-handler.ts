@@ -196,6 +196,22 @@ export class FeishuMessageHandler {
       return true;
     }
 
+    if (command.name === "pluginStart" || command.name === "pluginStop" || command.name === "pluginRestart" || command.name === "autostart" || command.name === "reset") {
+      const ompCommand: Record<string, string> = {
+        pluginStart: "start",
+        pluginStop: "stop",
+        pluginRestart: "restart",
+        autostart: "autostart",
+        reset: "reset",
+      };
+      const commandName = ompCommand[command.name];
+      await transport.replyText(
+        msg.messageId,
+        `\`/feishu ${commandName}\` 是 OMP 后台命令，飞书端不会直接执行以免误操作。请在 OMP 中运行 /feishu ${commandName}；如需远程升级，请使用 /feishu upgrade。`,
+      );
+      return true;
+    }
+
     if (command.name === "status") {
       const text = await this.diagnostics?.status?.(this.diagnostics?.isAdmin?.(msg.senderOpenId) === true);
       await transport.replyText(msg.messageId, text || "状态功能尚未准备好，请在 OMP 中运行 /feishu status。");
