@@ -41,7 +41,7 @@ test("gateway owner records a Linux process start fingerprint", async () => {
   if (process.platform !== "linux") return;
   const source = await Bun.file(new URL("../extension/gateway-lock.ts", import.meta.url)).text();
   assert.match(source, /processStartFingerprint\(process\.pid\)/);
-  assert.match(source, /processStartFingerprint\(owner\.pid\) !== owner\.processStart/);
+  assert.match(source, /fingerprintMismatch\(owner\.processStart, processStartFingerprint\(owner\.pid\)\)/);
 });
 
 test("a live gateway owner is not stale only because its heartbeat is old", () => {

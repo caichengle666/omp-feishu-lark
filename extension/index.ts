@@ -86,6 +86,7 @@ export default function feishuExtension(pi: ExtensionAPI) {
   let lastStatusText: string | undefined;
   let statusRefreshTimer: NodeJS.Timeout | undefined;
   const buildTag = process.env.FEISHU_EXT_DEV === "1" ? " [DEV]" : "";
+  let pendingDaemonLifecycle: "stop" | "restart" | "reset" | undefined;
   let upgradeInFlight = false;
 
   function setStatusText(text: string | undefined) {
@@ -605,25 +606,49 @@ export default function feishuExtension(pi: ExtensionAPI) {
     return { status: "restarted" as const, stopped, started };
   }
 
-  function scheduleDaemonExit(delayMs = 1_200, stopSupervisor = false) {
+  function hasLiveSupervisor() {
+    const supervisor = readSupervisorRecord(SUPERVISOR_PID_PATH);
+    return Boolean(supervisor && isSupervisorProcessAlive(supervisor));
+  }
+
+  function scheduleDaemonExit(operation: "stop" | "restart" | "reset", delayMs = 1_200, stopSupervisor = false) {
+    if (pendingDaemonLifecycle) return false;
+    pendingDaemonLifecycle = operation;
     queueMicrotask(() => {
       void (async () => {
         await sleep(delayMs);
-        if (stopSupervisor) requestSupervisorStop();
+        if (operation === "reset") removePluginState();
+        if (stopSupervisor && !requestSupervisorStop()) {
+          pendingDaemonLifecycle = undefined;
+          debugLog("feishu.lifecycle.supervisor_stop_failed", { operation });
+          return;
+        }
         try { await stop(); } catch {}
         await flushDebugLog();
         process.exit(0);
       })();
     });
+    return true;
   }
 
   function requestSupervisorStop() {
     const supervisor = readSupervisorRecord(SUPERVISOR_PID_PATH);
-    if (supervisor && isSupervisorProcessAlive(supervisor)) writeStopRequest(SUPERVISOR_STOP_PATH, supervisor);
-    return supervisor?.pid;
+    if (!supervisor || !isSupervisorProcessAlive(supervisor)) return false;
+    writeStopRequest(SUPERVISOR_STOP_PATH, supervisor);
+    return true;
+  }
+
+  function removePluginState() {
+    removePath(CONFIG_PATH);
+    removePath(STATE_PATH);
+    removePath(DEDUPE_PATH);
+    removePath(`${DEDUPE_PATH}.lock`);
+    removePath(BRIDGE_PATH);
+    ensureRoot();
   }
 
   async function remoteLifecycleStart() {
+    if (pendingDaemonLifecycle) return `飞书连接正在${pendingDaemonLifecycle === "restart" ? "重启" : "停止"}，请等待当前操作完成。`;
     if (process.env.PI_FEISHU_DAEMON === "1" && transport?.isRunning()) {
       return `飞书连接已在运行。Owner: ${formatOwner(gatewayLock?.owner)}`;
     }
@@ -634,7 +659,9 @@ export default function feishuExtension(pi: ExtensionAPI) {
 
   async function remoteLifecycleStop() {
     if (process.env.PI_FEISHU_DAEMON === "1") {
-      scheduleDaemonExit(1_200, true);
+      if (pendingDaemonLifecycle) return `已有飞书${pendingDaemonLifecycle === "restart" ? "重启" : "停止"}操作正在执行，请等待完成。`;
+      if (!hasLiveSupervisor()) throw new Error("无法确认 supervisor 正在运行，已拒绝停止以避免服务被自动拉起。请运行 /feishu doctor 后重试。");
+      scheduleDaemonExit("stop", 1_200, true);
       return "飞书连接正在停止，请稍后在 OMP 中运行 /feishu start 重新启动。";
     }
     const result = await stopDaemon();
@@ -644,7 +671,9 @@ export default function feishuExtension(pi: ExtensionAPI) {
 
   async function remoteLifecycleRestart() {
     if (process.env.PI_FEISHU_DAEMON === "1") {
-      scheduleDaemonExit();
+      if (pendingDaemonLifecycle) return `已有飞书${pendingDaemonLifecycle === "restart" ? "重启" : "停止"}操作正在执行，请等待完成。`;
+      if (!hasLiveSupervisor()) throw new Error("无法确认 supervisor 正在运行，已拒绝重启以避免连接无法自动恢复。请运行 /feishu doctor 后重试。");
+      scheduleDaemonExit("restart");
       return "飞书连接正在重启，数秒后会自动恢复。";
     }
     const result = await restartDaemon();
@@ -662,23 +691,14 @@ export default function feishuExtension(pi: ExtensionAPI) {
 
   async function remoteLifecycleReset() {
     if (process.env.PI_FEISHU_DAEMON === "1") {
-      removePath(CONFIG_PATH);
-      removePath(STATE_PATH);
-      removePath(DEDUPE_PATH);
-      removePath(`${DEDUPE_PATH}.lock`);
-      removePath(BRIDGE_PATH);
-      ensureRoot();
-      scheduleDaemonExit(1_200, true);
+      if (pendingDaemonLifecycle) return `已有飞书${pendingDaemonLifecycle === "restart" ? "重启" : "停止"}操作正在执行，请等待完成。`;
+      if (!hasLiveSupervisor()) throw new Error("无法确认 supervisor 正在运行，已拒绝重置以避免服务被自动拉起。请运行 /feishu doctor 后重试。");
+      scheduleDaemonExit("reset", 1_200, true);
       return "飞书插件已重置并停止，请重新运行 /feishu setup。";
     }
     const stopped = await stopDaemon();
     if (stopped.status === "error") throw stopped.error;
-    removePath(CONFIG_PATH);
-    removePath(STATE_PATH);
-    removePath(DEDUPE_PATH);
-    removePath(`${DEDUPE_PATH}.lock`);
-    removePath(BRIDGE_PATH);
-    ensureRoot();
+    removePluginState();
     return "飞书插件已重置并停止，请重新运行 /feishu setup。";
   }
 

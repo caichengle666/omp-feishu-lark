@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "bun:test";
@@ -34,7 +34,7 @@ test("workspace file resolver permits files inside the workspace and rejects out
   try {
     const local = join(root, "project", "report.pdf");
     writeFileSync(local, "pdf");
-    assert.equal(resolveWorkspaceFilePath(join(root, "project"), "report.pdf"), local);
+    assert.equal(resolveWorkspaceFilePath(join(root, "project"), "report.pdf"), realpathSync(local));
 
     const outside = join(root, "outside.txt");
     writeFileSync(outside, "outside");
