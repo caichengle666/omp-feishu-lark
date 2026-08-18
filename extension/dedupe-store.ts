@@ -1,9 +1,10 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { DEDUPE_PATH, ensureRoot } from "./config.js";
+import { processStartFingerprint } from "../support/feishu-supervisor.mjs";
+import { DEDUPE_PATH, ensureRoot, readJson, writeJson } from "./config.js";
 import { debugLog } from "./debug.js";
 import { acquireFileLease, releaseFileLease } from "./gateway-lock.js";
 
 const MESSAGE_TTL_MS = 24 * 60 * 60 * 1000;
+const PROCESSING_STALE_MS = 15 * 60 * 1000;
 
 type DedupeStatus = "processing" | "replied" | "ignored" | "failed";
 
@@ -12,6 +13,7 @@ type DedupeRecord = {
   firstSeenAt: number;
   updatedAt: number;
   pid: number;
+  processStart?: string;
   error?: string;
 };
 
@@ -30,8 +32,20 @@ export async function claimFeishuMessage(messageId: string): Promise<boolean> {
 
     const existing = messages[messageId];
     if (existing) {
-      existing.updatedAt = now;
-      writeStore({ messages });
+      if (canReclaimProcessing(existing, now)) {
+        messages[messageId] = {
+          ...existing,
+          status: "processing",
+          firstSeenAt: now,
+          updatedAt: now,
+          pid: process.pid,
+          processStart: processStartFingerprint(process.pid),
+          error: undefined,
+        };
+        writeStore({ messages });
+        debugLog("feishu.dedupe.reclaimed_processing", { messageId, previousPid: existing.pid, currentPid: process.pid });
+        return true;
+      }
       debugLog("feishu.dedupe.ignored_message", {
         messageId,
         status: existing.status,
@@ -47,6 +61,7 @@ export async function claimFeishuMessage(messageId: string): Promise<boolean> {
       firstSeenAt: now,
       updatedAt: now,
       pid: process.pid,
+      processStart: processStartFingerprint(process.pid),
     };
     writeStore({ messages });
     debugLog("feishu.dedupe.claimed_message", { messageId, pid: process.pid });
@@ -68,6 +83,7 @@ export async function markFeishuMessage(messageId: string, status: DedupeStatus,
       firstSeenAt: now,
       updatedAt: now,
       pid: process.pid,
+      processStart: processStartFingerprint(process.pid),
     };
 
     messages[messageId] = {
@@ -81,17 +97,21 @@ export async function markFeishuMessage(messageId: string, status: DedupeStatus,
 }
 
 function readStore(): DedupeStore {
-  try {
-    if (!existsSync(DEDUPE_PATH)) return {};
-    return JSON.parse(readFileSync(DEDUPE_PATH, "utf8")) as DedupeStore;
-  } catch {
-    return {};
-  }
+  return readJson<DedupeStore>(DEDUPE_PATH, {});
 }
 
 function writeStore(store: DedupeStore) {
   ensureRoot();
-  writeFileSync(DEDUPE_PATH, `${JSON.stringify(store, null, 2)}\n`, "utf8");
+  writeJson(DEDUPE_PATH, store);
+}
+
+function canReclaimProcessing(record: DedupeRecord, now: number) {
+  if (record.status !== "processing" || !record.updatedAt || now - record.updatedAt <= PROCESSING_STALE_MS) return false;
+  try {
+    if (process.kill(record.pid, 0) !== undefined) return false;
+  } catch {}
+  const currentStart = processStartFingerprint(record.pid);
+  return !record.processStart || !currentStart || record.processStart !== currentStart;
 }
 
 function pruneExpired(messages: Record<string, DedupeRecord>, now: number) {

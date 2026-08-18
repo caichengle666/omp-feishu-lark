@@ -711,7 +711,11 @@ async function upgradeDaemon(targetVersion: string, noticeTarget?: UpgradeNotice
       });
       return `升级文件已就绪（${current} → ${target}），正在重启服务…`;
     }
-    await restartDaemon();
+    const restarted = await restartDaemon();
+    if (restarted.status === "error") {
+      const detail = restarted.stopped.error instanceof Error ? restarted.stopped.error.message : String(restarted.stopped.error);
+      throw new Error(`升级文件已安装，但飞书服务重启失败：${detail}。请运行 /feishu start 或 /feishu doctor。`);
+    }
     return `升级完成：${current} → ${pluginVersion()}，服务已重启。`;
   }
 

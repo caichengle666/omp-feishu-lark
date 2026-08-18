@@ -6,6 +6,7 @@ import { detectImageMime } from "./attachments.js";
 import { debugLog } from "./debug.js";
 import { buildMarkdownCardParts, buildPostMessages, chooseMessageMode } from "./rich-text.js";
 import { FeishuCardActionWebhook } from "./card-action-webhook.js";
+import { withFeishuRetry } from "./feishu-retry.js";
 
 const TEXT_CHUNK_MAX_BYTES = 120 * 1024;
 const REST_TIMEOUT_MS = 15_000;
@@ -297,10 +298,10 @@ export class FeishuTransport {
     debugLog("feishu.reply.text", { messageId, length: text.length });
     const chunks = splitText(text, TEXT_CHUNK_MAX_BYTES);
     for (const chunk of chunks) {
-      await this.sdkClient.im.message.reply({
+      await withFeishuRetry(() => this.sdkClient!.im.message.reply({
         path: { message_id: messageId },
         data: { msg_type: "text", content: JSON.stringify({ text: chunk }) },
-      });
+      }), "reply text");
     }
   }
 
@@ -308,10 +309,10 @@ export class FeishuTransport {
     debugLog("feishu.reply.plain_text", { messageId, length: text.length });
     const chunks = splitText(text, TEXT_CHUNK_MAX_BYTES);
     for (const chunk of chunks) {
-      await this.sdkClient.im.message.reply({
+      await withFeishuRetry(() => this.sdkClient!.im.message.reply({
         path: { message_id: messageId },
         data: { msg_type: "text", content: JSON.stringify({ text: chunk }) },
-      });
+      }), "reply plain text");
     }
   }
 
@@ -328,38 +329,38 @@ export class FeishuTransport {
     debugLog("feishu.send.text", { chatId, length: text.length });
     const chunks = splitText(text, TEXT_CHUNK_MAX_BYTES);
     for (const chunk of chunks) {
-      await this.sdkClient.im.message.create({
+      await withFeishuRetry(() => this.sdkClient!.im.message.create({
         params: { receive_id_type: "chat_id" },
         data: {
           receive_id: chatId,
           msg_type: "text",
           content: JSON.stringify({ text: chunk }),
         },
-      });
+      }), "send text");
     }
   }
 
   async replyMarkdownCard(messageId: string, text: string) {
     debugLog("feishu.reply.markdown_card", { messageId, length: text.length });
     for (const { card } of this.buildMarkdownCardPartsWithCopySources(text)) {
-      await this.sdkClient.im.message.reply({
+      await withFeishuRetry(() => this.sdkClient!.im.message.reply({
         path: { message_id: messageId },
         data: { msg_type: "interactive", content: JSON.stringify(card) },
-      });
+      }), "reply card");
     }
   }
 
   async sendMarkdownCard(chatId: string, text: string) {
     debugLog("feishu.send.markdown_card", { chatId, length: text.length });
     for (const { card } of this.buildMarkdownCardPartsWithCopySources(text)) {
-      await this.sdkClient.im.message.create({
+      await withFeishuRetry(() => this.sdkClient!.im.message.create({
         params: { receive_id_type: "chat_id" },
         data: {
           receive_id: chatId,
           msg_type: "interactive",
           content: JSON.stringify(card),
         },
-      });
+      }), "send card");
     }
   }
 
@@ -393,42 +394,42 @@ export class FeishuTransport {
   async replyPost(messageId: string, text: string) {
     debugLog("feishu.reply.post", { messageId, length: text.length });
     for (const post of buildPostMessages(text, this.config.language)) {
-      await this.sdkClient.im.message.reply({
+      await withFeishuRetry(() => this.sdkClient!.im.message.reply({
         path: { message_id: messageId },
         data: { msg_type: "post", content: JSON.stringify(post) },
-      });
+      }), "reply post");
     }
   }
 
   async sendPost(chatId: string, text: string) {
     debugLog("feishu.send.post", { chatId, length: text.length });
     for (const post of buildPostMessages(text, this.config.language)) {
-      await this.sdkClient.im.message.create({
+      await withFeishuRetry(() => this.sdkClient!.im.message.create({
         params: { receive_id_type: "chat_id" },
         data: {
           receive_id: chatId,
           msg_type: "post",
           content: JSON.stringify(post),
         },
-      });
+      }), "send post");
     }
   }
 
   async replyCard(messageId: string, card: object) {
     debugLog("feishu.reply.card", { messageId });
-    const res = await this.sdkClient.im.message.reply({
+    const res = await withFeishuRetry(() => this.sdkClient!.im.message.reply({
       path: { message_id: messageId },
       data: { msg_type: "interactive", content: JSON.stringify(card) },
-    });
+    }), "reply task card");
     return res?.data?.message_id as string | undefined;
   }
 
   async updateCard(messageId: string, card: object) {
     debugLog("feishu.update.card", { messageId });
-    await this.sdkClient.im.v1.message.patch({
+    await withFeishuRetry(() => this.sdkClient!.im.v1.message.patch({
       path: { message_id: messageId },
       data: { content: JSON.stringify(card) },
-    });
+    }), "update card");
   }
 
   async replyLocalFile(messageId: string, filePath: string) {
@@ -444,28 +445,28 @@ export class FeishuTransport {
     const bytes = readFileSync(filePath);
     const imageMime = detectImageMime(bytes);
     if (imageMime && bytes.length <= MAX_IMAGE_UPLOAD_BYTES) {
-      const uploaded = await client.im.v1.image.create({
+      const uploaded = await withFeishuRetry(() => client.im.v1.image.create({
         data: { image_type: "message", image: bytes },
-      });
+      }), "upload image");
       const imageKey = (uploaded as any)?.image_key || (uploaded as any)?.data?.image_key;
       if (!imageKey) throw new Error("Feishu image upload did not return image_key");
-      await client.im.message.reply({
+      await withFeishuRetry(() => client.im.message.reply({
         path: { message_id: messageId },
         data: { msg_type: "image", content: JSON.stringify({ image_key: imageKey }) },
-      });
+      }), "reply image");
       debugLog("feishu.reply.local_image", { messageId, fileName, bytes: bytes.length });
       return { kind: "image" as const, fileName };
     }
 
-    const uploaded = await client.im.v1.file.create({
+    const uploaded = await withFeishuRetry(() => client.im.v1.file.create({
       data: { file_type: feishuFileType(fileName), file_name: fileName, file: bytes },
-    });
+    }), "upload file");
     const fileKey = (uploaded as any)?.file_key || (uploaded as any)?.data?.file_key;
     if (!fileKey) throw new Error("Feishu file upload did not return file_key");
-    await client.im.message.reply({
+    await withFeishuRetry(() => client.im.message.reply({
       path: { message_id: messageId },
       data: { msg_type: "file", content: JSON.stringify({ file_key: fileKey }) },
-    });
+    }), "reply file");
     debugLog("feishu.reply.local_file", { messageId, fileName, bytes: bytes.length });
     return { kind: "file" as const, fileName };
   }

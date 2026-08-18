@@ -1,7 +1,7 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { processStartFingerprint } from "../support/feishu-supervisor.mjs";
-import { AGENT_DIR } from "./config.js";
+import { AGENT_DIR, readJson } from "./config.js";
 import { debugLog } from "./debug.js";
 
 const LOCK_KEY = "pi-feishu-lark.feishu-gateway";
@@ -146,12 +146,20 @@ function isProcessAlive(pid: number) {
 function randomToken() { return `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`; }
 
 function readLocksFile(): LocksFile {
-  try { return existsSync(LOCKS_PATH) ? JSON.parse(readFileSync(LOCKS_PATH, "utf8")) as LocksFile : {}; } catch { return {}; }
+  const locks = readJson<LocksFile>(LOCKS_PATH, {});
+  if (!locks || typeof locks !== "object" || Array.isArray(locks)) return {};
+  return locks;
 }
 
 function writeLocksFile(locks: LocksFile) {
   mkdirSync(dirname(LOCKS_PATH), { recursive: true });
-  writeFileSync(LOCKS_PATH, `${JSON.stringify(locks, null, 2)}\n`, "utf8");
+  const temporaryPath = `${LOCKS_PATH}.tmp-${process.pid}-${Date.now()}`;
+  try {
+    writeFileSync(temporaryPath, `${JSON.stringify(locks, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+    renameSync(temporaryPath, LOCKS_PATH);
+  } finally {
+    try { rmSync(temporaryPath, { force: true }); } catch {}
+  }
 }
 
 async function withLocksFileLock<T>(fn: () => T | Promise<T>): Promise<T> {
