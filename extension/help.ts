@@ -1,6 +1,7 @@
 export function feishuHelpText() {
   return [
-    "OMP 后台命令（在 OMP 中运行）：",
+    "插件管理命令（OMP 中运行；管理员也可在飞书直接执行）：",
+    "管理员可在飞书发送：/feishu start、/feishu stop、/feishu restart、/feishu autostart、/feishu reset",
     "/feishu setup - 配置飞书应用",
     "/feishu start - 启动飞书连接",
     "/feishu stop - 停止飞书连接",

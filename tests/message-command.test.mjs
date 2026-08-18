@@ -41,15 +41,22 @@ test("Feishu setup replies with OMP guidance instead of sending the text to the 
   assert.match(replies[0], /OMP 后台/);
 });
 
-test("OMP-only lifecycle commands reply with guidance instead of reaching the model", async () => {
+test("non-administrators cannot execute lifecycle commands remotely", async () => {
   const replies = [];
+  const calls = [];
   const transport = { replyText: async (_messageId, text) => { replies.push(text); } };
   const handler = new FeishuMessageHandler({}, () => transport, undefined, {
-    doctor: () => "",
-    version: () => "",
+    isAdmin: () => false,
+    lifecycle: {
+      start: async () => { calls.push("start"); return "started"; },
+      stop: async () => { calls.push("stop"); return "stopped"; },
+      restart: async () => { calls.push("restart"); return "restarted"; },
+      autostart: async () => { calls.push("autostart"); return "autostart on"; },
+      reset: async () => { calls.push("reset"); return "reset"; },
+    },
   });
   const message = {
-    messageId: "om_lifecycle",
+    messageId: "om_lifecycle_denied",
     chatId: "oc_chat",
     chatType: "p2p",
     senderOpenId: "ou_user",
@@ -60,6 +67,40 @@ test("OMP-only lifecycle commands reply with guidance instead of reaching the mo
     assert.equal(await handler.handleCommand(message, "p2p:ou_user", command), true);
   }
   assert.equal(replies.length, 5);
-  assert.ok(replies.every((text) => text.includes("OMP 后台命令")));
-  assert.match(replies[2], /\/feishu restart/);
+  assert.ok(replies.every((text) => text.includes("无权执行远程")));
+  assert.equal(calls.length, 0);
+});
+
+test("administrators can execute lifecycle commands remotely", async () => {
+  const replies = [];
+  const calls = [];
+  const transport = {
+    replyText: async (_messageId, text) => { replies.push(text); },
+    isRunning: () => true,
+  };
+  const handler = new FeishuMessageHandler({}, () => transport, undefined, {
+    isAdmin: () => true,
+    lifecycle: {
+      start: async () => { calls.push("start"); return "started"; },
+      stop: async () => { calls.push("stop"); return "stopped"; },
+      restart: async () => { calls.push("restart"); return "restarted"; },
+      autostart: async () => { calls.push("autostart"); return "autostart on"; },
+      reset: async () => { calls.push("reset"); return "resetted"; },
+    },
+  });
+  const message = {
+    messageId: "om_lifecycle_admin",
+    chatId: "oc_chat",
+    chatType: "p2p",
+    senderOpenId: "ou_user",
+    msgType: "text",
+    content: "",
+  };
+  for (const command of ["/feishu start", "/feishu stop", "/feishu restart", "/feishu autostart", "/feishu reset"]) {
+    assert.equal(await handler.handleCommand(message, "p2p:ou_user", command), true);
+  }
+  assert.deepEqual(calls, ["start", "stop", "restart", "autostart", "reset"]);
+  assert.equal(replies.length, 10);
+  assert.ok(replies.some((text) => text === "已收到 /feishu restart，正在执行…"));
+  assert.ok(replies.some((text) => text === "restarted"));
 });

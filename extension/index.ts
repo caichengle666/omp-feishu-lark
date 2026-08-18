@@ -71,6 +71,13 @@ export default function feishuExtension(pi: ExtensionAPI) {
     debug: () => debugReport(),
     refresh: () => refreshReport(),
     config: () => configReport(),
+    lifecycle: {
+      start: () => remoteLifecycleStart(),
+      stop: () => remoteLifecycleStop(),
+      restart: () => remoteLifecycleRestart(),
+      autostart: () => remoteLifecycleAutostart(),
+      reset: () => remoteLifecycleReset(),
+    },
   });
 
   const STATUS_KEY = "feishu-connection";
@@ -596,6 +603,83 @@ export default function feishuExtension(pi: ExtensionAPI) {
     if (stopped.status === "error") return { status: "error" as const, stopped };
     const started = await startDaemon(true);
     return { status: "restarted" as const, stopped, started };
+  }
+
+  function scheduleDaemonExit(delayMs = 1_200, stopSupervisor = false) {
+    queueMicrotask(() => {
+      void (async () => {
+        await sleep(delayMs);
+        if (stopSupervisor) requestSupervisorStop();
+        try { await stop(); } catch {}
+        await flushDebugLog();
+        process.exit(0);
+      })();
+    });
+  }
+
+  function requestSupervisorStop() {
+    const supervisor = readSupervisorRecord(SUPERVISOR_PID_PATH);
+    if (supervisor && isSupervisorProcessAlive(supervisor)) writeStopRequest(SUPERVISOR_STOP_PATH, supervisor);
+    return supervisor?.pid;
+  }
+
+  async function remoteLifecycleStart() {
+    if (process.env.PI_FEISHU_DAEMON === "1" && transport?.isRunning()) {
+      return `飞书连接已在运行。Owner: ${formatOwner(gatewayLock?.owner)}`;
+    }
+    const result = await startDaemon(false);
+    if (result.status === "busy") return `飞书连接已在后台运行。Owner: ${formatOwner(result.owner)}`;
+    return `飞书连接已启动。Gateway pid=${result.pid}`;
+  }
+
+  async function remoteLifecycleStop() {
+    if (process.env.PI_FEISHU_DAEMON === "1") {
+      scheduleDaemonExit(1_200, true);
+      return "飞书连接正在停止，请稍后在 OMP 中运行 /feishu start 重新启动。";
+    }
+    const result = await stopDaemon();
+    if (result.status === "error") throw result.error;
+    return result.status === "none" ? "飞书连接未在运行。" : "飞书连接已停止。";
+  }
+
+  async function remoteLifecycleRestart() {
+    if (process.env.PI_FEISHU_DAEMON === "1") {
+      scheduleDaemonExit();
+      return "飞书连接正在重启，数秒后会自动恢复。";
+    }
+    const result = await restartDaemon();
+    if (result.status === "error") throw result.stopped.error;
+    return `飞书连接已重启。Owner: ${formatOwner(result.started.owner)}`;
+  }
+
+  async function remoteLifecycleAutostart() {
+    const cfg = loadConfig();
+    if (!cfg) throw new Error("Missing config. Run /feishu setup first. 配置不存在，请先运行 /feishu setup。");
+    cfg.autoStart = cfg.autoStart === false;
+    writeJson(CONFIG_PATH, cfg);
+    return cfg.autoStart ? "飞书自动启动已开启。" : "飞书自动启动已关闭。";
+  }
+
+  async function remoteLifecycleReset() {
+    if (process.env.PI_FEISHU_DAEMON === "1") {
+      removePath(CONFIG_PATH);
+      removePath(STATE_PATH);
+      removePath(DEDUPE_PATH);
+      removePath(`${DEDUPE_PATH}.lock`);
+      removePath(BRIDGE_PATH);
+      ensureRoot();
+      scheduleDaemonExit(1_200, true);
+      return "飞书插件已重置并停止，请重新运行 /feishu setup。";
+    }
+    const stopped = await stopDaemon();
+    if (stopped.status === "error") throw stopped.error;
+    removePath(CONFIG_PATH);
+    removePath(STATE_PATH);
+    removePath(DEDUPE_PATH);
+    removePath(`${DEDUPE_PATH}.lock`);
+    removePath(BRIDGE_PATH);
+    ensureRoot();
+    return "飞书插件已重置并停止，请重新运行 /feishu setup。";
   }
 
   async function requestUpgrade(targetVersion: string, noticeTarget?: UpgradeNoticeTarget, onProgress?: (phase: string) => void): Promise<string> {

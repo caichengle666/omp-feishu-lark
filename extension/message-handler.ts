@@ -31,6 +31,13 @@ export class FeishuMessageHandler {
       debug?: () => string | Promise<string>;
       refresh?: () => string | Promise<string>;
       config?: () => string | Promise<string>;
+      lifecycle?: {
+        start?: () => Promise<string | undefined>;
+        stop?: () => Promise<string | undefined>;
+        restart?: () => Promise<string | undefined>;
+        autostart?: () => Promise<string | undefined>;
+        reset?: () => Promise<string | undefined>;
+      };
     },
   ) {}
 
@@ -197,18 +204,31 @@ export class FeishuMessageHandler {
     }
 
     if (command.name === "pluginStart" || command.name === "pluginStop" || command.name === "pluginRestart" || command.name === "autostart" || command.name === "reset") {
-      const ompCommand: Record<string, string> = {
-        pluginStart: "start",
-        pluginStop: "stop",
-        pluginRestart: "restart",
-        autostart: "autostart",
-        reset: "reset",
-      };
-      const commandName = ompCommand[command.name];
-      await transport.replyText(
-        msg.messageId,
-        `\`/feishu ${commandName}\` 是 OMP 后台命令，飞书端不会直接执行以免误操作。请在 OMP 中运行 /feishu ${commandName}；如需远程升级，请使用 /feishu upgrade。`,
-      );
+      const lifecycleName: "start" | "stop" | "restart" | "autostart" | "reset" =
+        command.name === "pluginStart" ? "start"
+        : command.name === "pluginStop" ? "stop"
+        : command.name === "pluginRestart" ? "restart"
+        : command.name === "autostart" ? "autostart"
+        : "reset";
+      if (!this.diagnostics?.isAdmin?.(msg.senderOpenId)) {
+        await transport.replyText(
+          msg.messageId,
+          `无权执行远程 ${lifecycleName}。请将你的 Open ID 加入 adminOpenIds：${msg.senderOpenId}`,
+        );
+        return true;
+      }
+      await transport.replyText(msg.messageId, `已收到 /feishu ${lifecycleName}，正在执行…`);
+      try {
+        const report = await this.diagnostics?.lifecycle?.[lifecycleName]?.();
+        if (report && transport.isRunning?.() !== false) await transport.replyText(msg.messageId, report);
+      } catch (error) {
+        if (typeof transport.isRunning !== "function" || transport.isRunning()) {
+          await transport.replyText(
+            msg.messageId,
+            `执行 /feishu ${lifecycleName} 失败：${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+      }
       return true;
     }
 
