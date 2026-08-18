@@ -32,6 +32,19 @@ export function parseSupervisorArgs(argv) {
   return { options, command, args: argv.slice(separator + 2) };
 }
 
+export function readEnvironmentFile(path) {
+  if (!path) return {};
+  const parsed = JSON.parse(readFileSync(path, "utf8"));
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(`Invalid supervisor env JSON: ${path}`);
+  }
+  const env = {};
+  for (const [key, value] of Object.entries(parsed)) {
+    if (typeof value === "string") env[key] = value;
+  }
+  return env;
+}
+
 export function readSupervisorRecord(path) {
   try {
     if (!existsSync(path)) return undefined;
@@ -195,6 +208,7 @@ export async function runSupervisor(argv = process.argv.slice(2)) {
   const logPath = required(options.log, "--log");
   const pidPath = required(options.pid, "--pid");
   const stopPath = required(options.stop, "--stop");
+  const fileEnv = options["env-json"] ? readEnvironmentFile(options["env-json"]) : {};
   mkdirSync(dirname(logPath), { recursive: true });
 
   const existing = readSupervisorRecord(pidPath);
@@ -269,6 +283,7 @@ export async function runSupervisor(argv = process.argv.slice(2)) {
         cwd,
         env: {
           ...process.env,
+          ...fileEnv,
           PI_FEISHU_DAEMON: "1",
           BUN_CONFIG_DNS_RESULT_ORDER: "ipv4first",
           NODE_OPTIONS: [process.env.NODE_OPTIONS, "--dns-result-order=ipv4first"].filter(Boolean).join(" "),

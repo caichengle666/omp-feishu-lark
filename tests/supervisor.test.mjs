@@ -5,10 +5,11 @@ import { join, resolve } from "node:path";
 import { spawn } from "node:child_process";
 import test from "node:test";
 import { EventEmitter } from "node:events";
-import { appendRotatingLog, parseSupervisorArgs, processStartFingerprint, readSupervisorRecord, recordedProcessStatus, restartDelay, shouldStopRequested, stopChild, writeStopRequest, writeSupervisorRecord } from "../support/feishu-supervisor.mjs";
+import { appendRotatingLog, parseSupervisorArgs, processStartFingerprint, readEnvironmentFile, readSupervisorRecord, recordedProcessStatus, restartDelay, shouldStopRequested, stopChild, writeStopRequest, writeSupervisorRecord } from "../support/feishu-supervisor.mjs";
 
 test("supervisor parses one cross-platform executable and argument array", () => {
   assert.deepEqual(parseSupervisorArgs([
+    "--env-json", "C:\\state\\supervisor.env.json",
     "--cwd", "C:\\work dir",
     "--log", "C:\\state\\daemon.log",
     "--pid", "C:\\state\\supervisor.pid",
@@ -19,10 +20,20 @@ test("supervisor parses one cross-platform executable and argument array", () =>
     "--mode",
     "rpc",
   ]), {
-    options: { cwd: "C:\\work dir", log: "C:\\state\\daemon.log", pid: "C:\\state\\supervisor.pid", stop: "C:\\state\\supervisor.stop" },
+    options: { "env-json": "C:\\state\\supervisor.env.json", cwd: "C:\\work dir", log: "C:\\state\\daemon.log", pid: "C:\\state\\supervisor.pid", stop: "C:\\state\\supervisor.stop" },
     command: "C:\\Program Files\\Bun\\bun.exe",
     args: ["cli.js", "--mode", "rpc"],
   });
+});
+
+test("supervisor loads a daemon environment file for OS autostart", () => {
+  const root = join(tmpdir(), `omp-feishu-env-${process.pid}-${Date.now()}`);
+  const envPath = join(root, "supervisor.env.json");
+  mkdirSync(root, { recursive: true });
+  writeFileSync(envPath, JSON.stringify({ OMP_CLI_PATH: "C:\\omp\\cli.js", PI_FEISHU_DAEMON: "1" }));
+  assert.deepEqual(readEnvironmentFile(envPath), { OMP_CLI_PATH: "C:\\omp\\cli.js", PI_FEISHU_DAEMON: "1" });
+  assert.throws(() => readEnvironmentFile(join(root, "missing.json")));
+  rmSync(root, { recursive: true, force: true });
 });
 
 test("supervisor restart delay is exponential and capped", () => {

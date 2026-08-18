@@ -40,7 +40,17 @@ bunx @caichengle/omp-feishu-lark /path/to/feishu
 bunx @caichengle/omp-feishu-lark --reconfigure
 bunx @caichengle/omp-feishu-lark --no-restart
 bunx @caichengle/omp-feishu-lark --workspace DIR
+bunx @caichengle/omp-feishu-lark --install-service
 ```
+
+`--install-service` registers the OS auto-start entry after files are in place.
+The same entry is toggled later with `/feishu autostart`: Linux uses systemd,
+macOS uses launchd, and Windows uses Task Scheduler. In every case the OS starts
+`feishu-supervisor.mjs`, which then starts the OMP daemon, so reboot recovery
+keeps the same supervisor lifecycle as a normal start. A daemon that detects a
+missing supervisor also starts one replacement through the same launch spec and
+exits, which is a cross-platform runtime fallback for orphaned processes.
+Disabling OS auto-start does not stop an already running Feishu connection.
 
 To update an existing installation to the newest published version, run:
 

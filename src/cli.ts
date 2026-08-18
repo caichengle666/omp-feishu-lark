@@ -10,6 +10,8 @@ import { GATEWAY_LOCK_KEY, parseLocksFile, removeGatewayLockKey } from "./instal
 import { cleanupLegacyInstallations } from "./legacy-cleanup.js";
 import { verifyRpcWorkerReady } from "./rpc-self-test.js";
 import { bunDnsArgs, resolveUpgradeNetworkPolicy, upgradeNetworkAttempts, upgradeTimeoutMs } from "../extension/upgrade.js";
+import { ensureAutoStart } from "./autostart.js";
+import { buildDaemonSpec } from "./daemon-spec.js";
 
 const isWindows = process.platform === "win32";
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -54,14 +56,16 @@ let pluginDir = "";
 let workspace = "";
 let reconfigure = false;
 let restart = true;
+let installService = false;
 
 for (let index = 0; index < args.length; index += 1) {
   const arg = args[index];
   if (arg === "--reconfigure") reconfigure = true;
   else if (arg === "--no-restart") restart = false;
+  else if (arg === "--install-service") installService = true;
   else if (arg === "--workspace") workspace = args[++index] || fail("--workspace needs a directory");
   else if (arg === "--help" || arg === "-h") {
-    console.log("bunx @caichengle/omp-feishu-lark [PLUGIN_DIR] [--workspace DIR] [--reconfigure] [--no-restart]");
+    console.log("bunx @caichengle/omp-feishu-lark [PLUGIN_DIR] [--workspace DIR] [--reconfigure] [--no-restart] [--install-service]");
     process.exit(0);
   } else if (arg.startsWith("-")) fail(`Unknown option: ${arg}`);
   else pluginDir = arg;
@@ -179,6 +183,7 @@ await checkFeishuApp(config);
 const stagingDir = join(dirname(pluginDir), `.feishu-install-${process.pid}-${Date.now()}`);
 removeDirectory(stagingDir);
 mkdirSync(stagingDir, { recursive: true });
+copyDirectory(join(packageRoot, "src"), join(stagingDir, "src"));
 const stagingExtensionDir = join(stagingDir, "extension");
 const stagingSupportDir = join(stagingDir, "support");
 mkdirSync(stagingExtensionDir, { recursive: true });
@@ -249,6 +254,23 @@ const rollbackDir = replacePluginDirectory(stagingDir, pluginDir);
 removeDirectory(stagingDir);
 ok("Old plugin files replaced; rollback copy retained until startup passes");
 
+if (installService) {
+  const serviceSpec = buildDaemonSpec({
+    bunBin,
+    ompCliPath: rpcOmpCli,
+    extensionPath: join(pluginDir, "extension", "index.ts"),
+    workspace,
+    agentDir,
+    runtimeRoot: runtimeDir,
+    pluginVersion: packageManifest.version,
+  });
+  const autostart = await ensureAutoStart(serviceSpec, true, {}, { start: false });
+  if (autostart.status.state === "foreign" || autostart.status.state === "permission" || autostart.status.state === "unreadable") {
+    fail(autostart.message);
+  }
+  ok(autostart.message);
+}
+
 if (!restart) {
   removeDirectory(rollbackDir);
   info("Files installed; daemon was not restarted (--no-restart).");
@@ -258,29 +280,20 @@ if (!restart) {
 mkdirSync(runtimeDir, { recursive: true });
 
 const logPath = join(runtimeDir, "daemon.log");
-const daemonArgs = ["--mode", "rpc", "--no-extensions", "--no-skills", "--allow-home", "--cwd", workspace, "-e", join(pluginDir, "extension", "index.ts")];
-const daemonExecutable = bunBin;
-const daemonLaunchArgs = [rpcOmpCli, ...daemonArgs];
+const launchSpec = buildDaemonSpec({
+  bunBin,
+  ompCliPath: rpcOmpCli,
+  extensionPath: join(pluginDir, "extension", "index.ts"),
+  workspace,
+  agentDir,
+  runtimeRoot: runtimeDir,
+  pluginVersion: packageManifest.version,
+});
 const launchToken = `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-const launched = spawn(bunBin, [
-  join(pluginDir, "support", "feishu-supervisor.mjs"),
-  "--cwd", workspace,
-  "--log", logPath,
-  "--pid", supervisorPidPath,
-  "--stop", supervisorStopPath,
-  "--",
-  daemonExecutable,
-  ...daemonLaunchArgs,
-], {
-  cwd: workspace,
+const launched = spawn(launchSpec.supervisorCommand[0], launchSpec.supervisorCommand.slice(1), {
+  cwd: launchSpec.cwd,
   detached: true,
-  env: {
-    ...process.env,
-    ...(rpcOmpCli ? { OMP_CLI_PATH: rpcOmpCli } : {}),
-    ...(process.env.PI_CODING_AGENT_DIR || process.env.OMP_AGENT_DIR ? { PI_CODING_AGENT_DIR: agentDir } : {}),
-    FEISHU_PLUGIN_VERSION: packageManifest.version,
-    FEISHU_LAUNCH_TOKEN: launchToken,
-  },
+  env: { ...process.env, ...launchSpec.env, FEISHU_LAUNCH_TOKEN: launchToken },
   stdio: "ignore",
   windowsHide: true,
 });
@@ -342,6 +355,16 @@ function validateInstallerConfig(value: Record<string, unknown> | undefined) {
   }
   if (value.cardActionMode === "webhook" && (typeof value.cardActionToken !== "string" || !value.cardActionToken.trim())) {
     fail(`cardActionToken is required when cardActionMode is webhook: ${configPath}`);
+  }
+}
+
+function copyDirectory(source: string, target: string) {
+  mkdirSync(target, { recursive: true });
+  for (const entry of readdirSync(source, { withFileTypes: true })) {
+    const from = join(source, entry.name);
+    const to = join(target, entry.name);
+    if (entry.isDirectory()) copyDirectory(from, to);
+    else writeFileSync(to, readFileSync(from));
   }
 }
 
@@ -503,27 +526,19 @@ async function restartRestoredDaemon() {
   try {
     const restoredManifest = JSON.parse(readFileSync(join(pluginDir, "package.json"), "utf8")) as { version?: string };
     const launchToken = `${process.pid}-rollback-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    const daemonArgs = ["--mode", "rpc", "--no-extensions", "--no-skills", "--allow-home", "--cwd", workspace, "-e", join(pluginDir, "extension", "index.ts")];
-    const daemonLaunchArgs = [rpcOmpCli, ...daemonArgs];
-    const launched = spawn(bunBin, [
-      join(pluginDir, "support", "feishu-supervisor.mjs"),
-      "--cwd", workspace,
-      "--log", join(runtimeDir, "daemon.log"),
-      "--pid", supervisorPidPath,
-      "--stop", supervisorStopPath,
-      "--",
+    const restoredSpec = buildDaemonSpec({
       bunBin,
-      ...daemonLaunchArgs,
-    ], {
-      cwd: workspace,
+      ompCliPath: rpcOmpCli,
+      extensionPath: join(pluginDir, "extension", "index.ts"),
+      workspace,
+      agentDir,
+      runtimeRoot: runtimeDir,
+      pluginVersion: restoredManifest.version || undefined,
+    });
+    const launched = spawn(restoredSpec.supervisorCommand[0], restoredSpec.supervisorCommand.slice(1), {
+      cwd: restoredSpec.cwd,
       detached: true,
-      env: {
-        ...process.env,
-        ...(rpcOmpCli ? { OMP_CLI_PATH: rpcOmpCli } : {}),
-        ...(process.env.PI_CODING_AGENT_DIR || process.env.OMP_AGENT_DIR ? { PI_CODING_AGENT_DIR: agentDir } : {}),
-        FEISHU_PLUGIN_VERSION: restoredManifest.version || "unknown",
-        FEISHU_LAUNCH_TOKEN: launchToken,
-      },
+      env: { ...process.env, ...restoredSpec.env, FEISHU_LAUNCH_TOKEN: launchToken },
       stdio: "ignore",
       windowsHide: true,
     });

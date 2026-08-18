@@ -49,11 +49,19 @@ test("keeps refresh non-destructive and handles atomic model-file replacement", 
 
 test("starts the detached Feishu gateway through the shared cross-platform supervisor", () => {
   const source = readFileSync(extensionPath, "utf8");
+  const daemonSpecSource = readFileSync(join(repoRoot, "src", "daemon-spec.ts"), "utf8");
+  const orphanRecoverySource = readFileSync(join(repoRoot, "src", "orphan-recovery.ts"), "utf8");
   assert.match(source, /feishu-supervisor\.mjs/);
-  assert.match(source, /"--stop", SUPERVISOR_STOP_PATH/);
+  assert.match(source, /buildDaemonSpec/);
+  assert.match(source, /spawn\(spec\.supervisorCommand\[0\], spec\.supervisorCommand\.slice\(1\)/);
+  assert.match(daemonSpecSource, /"--stop", join\(runtimeRoot, "supervisor\.stop"\)/);
   assert.match(source, /waitForGatewayConnection\(launchToken, daemonStartTimeoutMs\(\)\)/);
   assert.match(source, /FEISHU_LAUNCH_TOKEN: launchToken/);
   assert.match(source, /owner\.launchToken === launchToken/);
+  assert.match(source, /recoverOrphanDaemon\(daemonSpec\(\), withDaemonSpawnLock\)/);
+  assert.match(source, /orphan daemon detected; supervisor replacement started, exiting for takeover/);
+  assert.match(orphanRecoverySource, /detached: true/);
+  assert.match(orphanRecoverySource, /for \(let attempt = 0; attempt < 6/);
   assert.match(source, /readSupervisorRecord\(SUPERVISOR_PID_PATH\)/);
   assert.match(source, /writeStopRequest\(SUPERVISOR_STOP_PATH, supervisor\)/);
   assert.match(source, /waitForSupervisorExit\(supervisor, 15_000\)/);
@@ -161,10 +169,12 @@ test("installer removes only the Feishu gateway key from locks.json", () => {
 test("resolves RPC workers from a stable OMP CLI path", () => {
   const extensionSource = readFileSync(extensionPath, "utf8");
   const installerSource = readFileSync(join(repoRoot, "src", "cli.ts"), "utf8");
+  const daemonSpecSource = readFileSync(join(repoRoot, "src", "daemon-spec.ts"), "utf8");
   assert.doesNotMatch(extensionSource, /Bun\.resolveSync/);
   assert.match(extensionSource, /process\.env\.OMP_CLI_PATH/);
   assert.match(extensionSource, /install", "global", "node_modules"/);
-  assert.match(installerSource, /OMP_CLI_PATH: rpcOmpCli/);
+  assert.match(installerSource, /ompCliPath: rpcOmpCli/);
+  assert.match(daemonSpecSource, /OMP_CLI_PATH/);
   assert.match(installerSource, /process\.env\.OMP_BIN_PATH/);
   assert.match(installerSource, /readGlobalPackageRoots\("npm"\)/);
   assert.match(installerSource, /PI_CODING_AGENT_DIR/);
@@ -173,9 +183,11 @@ test("resolves RPC workers from a stable OMP CLI path", () => {
   assert.match(installerSource, /FEISHU_LAUNCH_TOKEN: launchToken/);
   assert.match(installerSource, /entry\.launchToken === launchToken/);
   assert.match(installerSource, /Existing Feishu supervisor.*did not stop/);
-  assert.match(installerSource, /const daemonExecutable = bunBin;/);
-  assert.match(installerSource, /const daemonLaunchArgs = \[rpcOmpCli, \.\.\.daemonArgs\]/);
-  assert.doesNotMatch(installerSource, /compatibleOmpCli \? \[compatibleOmpCli, \.\.\.daemonArgs\] : \[ompBin, \.\.\.daemonArgs\]/);
+  assert.match(installerSource, /const launchSpec = buildDaemonSpec\(/);
+  assert.match(installerSource, /spawn\(launchSpec\.supervisorCommand\[0\], launchSpec\.supervisorCommand\.slice\(1\)/);
+  assert.match(installerSource, /copyDirectory\(join\(packageRoot, "src"\), join\(stagingDir, "src"\)\)/);
+  assert.doesNotMatch(installerSource, /const daemonExecutable = bunBin;/);
+  assert.doesNotMatch(installerSource, /const daemonLaunchArgs = \[rpcOmpCli, \.\.\.daemonArgs\]/);
 });
 
 test("passes the resolved model into the Feishu OMP session without awaiting its own cache", () => {
@@ -221,16 +233,18 @@ test("provides doctor/version diagnostics and injects the release version into d
   assert.match(source, /async function doctorReport/);
   assert.match(source, /function versionReport/);
   assert.match(source, /formatStartError/);
-  assert.match(installerSource, /FEISHU_PLUGIN_VERSION/);
+  assert.match(installerSource, /pluginVersion: packageManifest\.version/);
 });
 
 test("keeps the release version readable after the installer rewrites runtime package.json", () => {
   const source = readFileSync(extensionPath, "utf8");
   const installerSource = readFileSync(join(repoRoot, "src", "cli.ts"), "utf8");
+  const daemonSpecSource = readFileSync(join(repoRoot, "src", "daemon-spec.ts"), "utf8");
   assert.match(source, /omp-plugins\.lock\.json/);
   assert.match(source, /FEISHU_PLUGIN_VERSION/);
   assert.match(installerSource, /version: packageManifest\.version/);
-  assert.match(installerSource, /FEISHU_PLUGIN_VERSION: packageManifest\.version/);
+  assert.match(installerSource, /pluginVersion: packageManifest\.version/);
+  assert.match(daemonSpecSource, /FEISHU_PLUGIN_VERSION/);
 });
 
 test("exposes doctor/version commands to Feishu messages as well as OMP", () => {
@@ -269,6 +283,20 @@ test("installs and manages the proactive notification webhook", () => {
   assert.match(installerSource, /const extensionFiles = readdirSync/);
   assert.match(installerSource, /file\.endsWith\("\.ts"\)/);
   assert.match(installerSource, /upgradeNetworkAttempts\(networkPolicy, dnsArgs\)/);
+});
+
+test("wires doctor and autostart through the cross-platform OS adapters", () => {
+  const source = readFileSync(extensionPath, "utf8");
+  const installerSource = readFileSync(join(repoRoot, "src", "cli.ts"), "utf8");
+  const wrapperSource = readFileSync(join(repoRoot, "src", "autostart.ts"), "utf8");
+  assert.match(source, /ensureAutoStart\(daemonSpec\(\)/);
+  assert.match(source, /inspectAutoStart\(daemonSpec\(\)/);
+  assert.match(source, /if \(cmd === "autostart"\)[\s\S]*await remoteLifecycleAutostart\(\)/);
+  assert.match(installerSource, /--install-service/);
+  assert.match(installerSource, /ensureAutoStart\(serviceSpec/);
+  assert.match(wrapperSource, /linux-systemd\.js/);
+  assert.match(wrapperSource, /darwin-launchd\.js/);
+  assert.match(wrapperSource, /win32-task\.js/);
 });
 
 test("notifies an interactive OMP session when gateway ownership is lost", () => {

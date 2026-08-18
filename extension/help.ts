@@ -6,7 +6,7 @@ export function feishuHelpText() {
     "/feishu start - 启动飞书连接",
     "/feishu stop - 停止飞书连接",
     "/feishu restart - 重启连接并加载最新代码和配置",
-    "/feishu autostart - 开关自动启动",
+    "/feishu autostart - 开关并配置系统自启动（Linux systemd / macOS launchd / Windows 计划任务）",
     "/feishu reset - 重置插件配置和会话映射",
     "",
     "飞书聊天命令（直接发给机器人）：",

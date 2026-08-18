@@ -7,8 +7,11 @@ import { getAgentDir } from "@oh-my-pi/pi-coding-agent";
 import { RpcClient } from "@oh-my-pi/pi-coding-agent/modes/rpc/rpc-client";
 import { buildModelCard, buildResumeCard, isAuthorizedCardAction, parseModelActionValue, parseResumePageActionValue, parseResumeSelectActionValue } from "./cards.js";
 import { isSupervisorProcessAlive, readSupervisorRecord, recordedProcessStatus, writeStopRequest } from "../support/feishu-supervisor.mjs";
-import { BRIDGE_PATH, CONFIG_PATH, DAEMON_LOG_PATH, DEBUG_LOG_PATH, DEDUPE_PATH, ensureRoot, isFeishuAdmin, loadConfig, mask, readJson, removePath, STATE_PATH, SUPERVISOR_PID_PATH, SUPERVISOR_STOP_PATH, UPGRADE_NOTICE_PATH, writeJson } from "./config.js";
+import { AGENT_DIR, BRIDGE_PATH, CONFIG_PATH, DAEMON_LOG_PATH, DEBUG_LOG_PATH, DEDUPE_PATH, ensureRoot, isFeishuAdmin, loadConfig, mask, readJson, removePath, ROOT_DIR, STATE_PATH, SUPERVISOR_PID_PATH, SUPERVISOR_STOP_PATH, UPGRADE_NOTICE_PATH, writeJson } from "./config.js";
 import { debugLog, flushDebugLog } from "./debug.js";
+import { ensureAutoStart, inspectAutoStart } from "../src/autostart.js";
+import { buildDaemonSpec } from "../src/daemon-spec.js";
+import { recoverOrphanDaemon } from "../src/orphan-recovery.js";
 import { FeishuBridgeRuntime } from "./bridge-runtime.js";
 import { FeishuBridgeStore } from "./bridge-store.js";
 import { ConversationManager } from "./conversation-manager.js";
@@ -477,6 +480,10 @@ export default function feishuExtension(pi: ExtensionAPI) {
     const supervisor = readSupervisorRecord(SUPERVISOR_PID_PATH);
     const supervisorRunning = supervisor ? isSupervisorProcessAlive(supervisor) : false;
     const models = await conversations.getAvailableModels().catch(() => []);
+    const autostart = await inspectAutoStart(daemonSpec()).catch(() => undefined);
+    const autostartText = autostart
+      ? `${autostart.state === "healthy" ? "OK" : autostart.state === "missing" || autostart.state === "disabled" ? "WARN" : "FAIL"} ${autostart.label}: ${autostart.detail || autostart.state}`
+      : "WARN autostart: unavailable";
     if (!detailed) {
       return [
         "Feishu doctor",
@@ -485,6 +492,7 @@ export default function feishuExtension(pi: ExtensionAPI) {
         `${owner?.status === "connected" ? "OK" : "WARN"} gateway`,
         `${supervisorRunning ? "OK" : "WARN"} supervisor`,
         `${models.length ? "OK" : "FAIL"} models: ${models.length} available`,
+        autostartText,
       ].join("\n");
     }
     const checks = [
@@ -495,23 +503,23 @@ export default function feishuExtension(pi: ExtensionAPI) {
       `${models.length ? "OK" : "FAIL"} models: ${models.length ? `${models.length} available` : "none available; check models.yml/auth"}`,
       `${cfg?.notificationWebhookEnabled ? (notificationWebhook ? "OK" : "WARN") : "OK"} notification webhook: ${cfg?.notificationWebhookEnabled ? (notificationWebhook?.getEndpointLabel() || "enabled but not running") : "disabled"}`,
       `${existsSync(process.cwd()) ? "OK" : "FAIL"} workspace: ${process.cwd()}`,
+      autostartText,
       `logs: ${DAEMON_LOG_PATH}`,
     ];
     return [`Feishu doctor`, `version: ${pluginVersion()}`, ...checks].join("\n");
   }
 
   function daemonSpec() {
-    const extensionPath = fileURLToPath(import.meta.url);
-    const args = [
+    const version = pluginVersion();
+    return buildDaemonSpec({
+      bunBin: process.execPath,
       ompCliPath,
-      "--mode", "rpc",
-      "--no-extensions",
-      "--no-skills",
-      "-e", extensionPath,
-    ];
-    const supervisorPath = join(dirname(extensionPath), "..", "support", "feishu-supervisor.mjs");
-    const bunBin = process.execPath;
-    return { extensionPath, args, supervisorPath, bunBin };
+      extensionPath: fileURLToPath(import.meta.url),
+      workspace: process.cwd(),
+      agentDir: AGENT_DIR,
+      runtimeRoot: ROOT_DIR,
+      pluginVersion: version && version !== "unknown" ? version : undefined,
+    });
   }
 
   async function startDaemon(takeover = false) {
@@ -550,19 +558,10 @@ export default function feishuExtension(pi: ExtensionAPI) {
       const spec = daemonSpec();
       const launchToken = `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
       if (!existsSync(spec.supervisorPath)) throw new Error(`Feishu supervisor is missing: ${spec.supervisorPath}`);
-      const child = spawn(spec.bunBin, [
-        spec.supervisorPath,
-        "--cwd", process.cwd(),
-        "--log", DAEMON_LOG_PATH,
-        "--pid", SUPERVISOR_PID_PATH,
-        "--stop", SUPERVISOR_STOP_PATH,
-        "--",
-        spec.bunBin,
-        ...spec.args,
-      ], {
+      const child = spawn(spec.supervisorCommand[0], spec.supervisorCommand.slice(1), {
         detached: true,
-        cwd: process.cwd(),
-        env: { ...process.env, FEISHU_LAUNCH_TOKEN: launchToken },
+        cwd: spec.cwd,
+        env: { ...process.env, ...spec.env, FEISHU_LAUNCH_TOKEN: launchToken },
         stdio: "ignore",
         windowsHide: true,
       });
@@ -684,9 +683,22 @@ export default function feishuExtension(pi: ExtensionAPI) {
   async function remoteLifecycleAutostart() {
     const cfg = loadConfig();
     if (!cfg) throw new Error("Missing config. Run /feishu setup first. 配置不存在，请先运行 /feishu setup。");
-    cfg.autoStart = cfg.autoStart === false;
+    const enabled = cfg.autoStart === false;
+    let result;
+    try {
+      result = await ensureAutoStart(daemonSpec(), enabled);
+    } catch (error) {
+      throw new Error(`配置 OS 自启动失败：${error instanceof Error ? error.message : String(error)}`);
+    }
+    if (result.status.state === "foreign" || result.status.state === "permission" || result.status.state === "unreadable") {
+      throw new Error(result.message);
+    }
+    cfg.autoStart = enabled;
     writeJson(CONFIG_PATH, cfg);
-    return cfg.autoStart ? "飞书自动启动已开启。" : "飞书自动启动已关闭。";
+    if (result.status.state === "unsupported") {
+      return `${enabled ? "飞书自动启动已开启" : "飞书自动启动已关闭"}（当前平台未配置 OS 自启动）。`;
+    }
+    return `${enabled ? "飞书自动启动已开启" : "飞书自动启动已关闭"}。\n${result.message}`;
   }
 
   async function remoteLifecycleReset() {
@@ -974,14 +986,11 @@ async function upgradeDaemon(targetVersion: string, noticeTarget?: UpgradeNotice
           return;
         }
         if (cmd === "autostart") {
-          const cfg = loadConfig();
-          if (!cfg) {
-            ctx.ui.notify("Missing config. Run /feishu setup first.", "warning");
-            return;
+          try {
+            ctx.ui.notify(await remoteLifecycleAutostart(), "info");
+          } catch (error) {
+            ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
           }
-          cfg.autoStart = cfg.autoStart === false;
-          writeJson(CONFIG_PATH, cfg);
-          ctx.ui.notify(cfg.autoStart ? "飞书自动启动已开启。" : "飞书自动启动已关闭。", "info");
           refreshStatusFromState();
           return;
         }
@@ -999,7 +1008,15 @@ async function upgradeDaemon(targetVersion: string, noticeTarget?: UpgradeNotice
 
   if (bootConfig && bootConfig.autoStart !== false) {
     if (process.env.PI_FEISHU_DAEMON === "1") {
-      start().then(async (result) => {
+      recoverOrphanDaemon(daemonSpec(), withDaemonSpawnLock).catch((error) => {
+        console.error("[feishu] orphan recovery check failed; continuing normal startup:", error instanceof Error ? error.message : error);
+        return false;
+      }).then((recovered) => {
+        if (recovered) {
+          console.error("[feishu] orphan daemon detected; supervisor replacement started, exiting for takeover");
+          process.exit(0);
+        }
+      }).then(() => start()).then(async (result) => {
         if (typeof result === "object" && result.status === "owned") {
           // A previous daemon still owns the lock (its supervisor may outlive
           // the upgrade). Do NOT exit — that makes our supervisor restart us
