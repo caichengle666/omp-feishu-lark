@@ -43,8 +43,78 @@ export function parseUnitExecStart(unit: string) {
   return line ? line.slice("ExecStart=".length) : undefined;
 }
 
-function unitEnvironmentLines(unit: string) {
-  return unit.split(/\r?\n/).filter((line) => line.startsWith("Environment=")).sort();
+export function parseExecStartArgs(execStart: string): string[] {
+  const tokens: string[] = [];
+  let current = "";
+  let inQuote = false;
+  let escaping = false;
+  for (const char of execStart) {
+    if (escaping) {
+      current += char;
+      escaping = false;
+      continue;
+    }
+    if (char === "\\") {
+      escaping = true;
+      continue;
+    }
+    if (char === "\"") {
+      inQuote = !inQuote;
+      continue;
+    }
+    if (!inQuote && /\s/.test(char)) {
+      if (current) {
+        tokens.push(normalizeSystemdValue(current));
+        current = "";
+      }
+      continue;
+    }
+    current += char;
+  }
+  if (escaping) current += "\\";
+  if (current) tokens.push(normalizeSystemdValue(current));
+  return tokens;
+}
+
+export function parseEnvironmentMap(unit: string): Record<string, string> {
+  const values: Record<string, string> = {};
+  for (const line of unit.split(/\r?\n/)) {
+    const match = line.match(/^Environment=([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
+    if (!match) continue;
+    values[match[1]] = normalizeSystemdValue(match[2]);
+  }
+  return values;
+}
+
+export function systemdUnitMatches(unit: string, expected: string, bunBin: string) {
+  const execStart = parseUnitExecStart(unit);
+  const expectedExecStart = parseUnitExecStart(expected);
+  if (!execStart || !expectedExecStart) return false;
+  const actualArgs = parseExecStartArgs(execStart);
+  const expectedArgs = parseExecStartArgs(expectedExecStart);
+  const actualEnv = parseEnvironmentMap(unit);
+  const expectedEnv = parseEnvironmentMap(expected);
+  const pathEntries = (actualEnv.PATH || "").split(/[:;]/);
+  const bunDirIndex = Math.max(bunBin.lastIndexOf("/"), bunBin.lastIndexOf("\\"));
+  const bunDir = bunDirIndex > 0 ? bunBin.slice(0, bunDirIndex) : "";
+  const execMatch = actualArgs.length === expectedArgs.length
+    && actualArgs.every((arg, index) => arg === expectedArgs[index]);
+  const envMatch = Object.entries(expectedEnv).every(([key, value]) =>
+    key === "FEISHU_PLUGIN_VERSION" || actualEnv[key] === value);
+  const pathMatch = !bunDir || pathEntries.includes(bunDir);
+  const workingDirectoryMatch = normalizeSystemdValue(unit.match(/^WorkingDirectory=(.*)$/m)?.[1] || "")
+    === normalizeSystemdValue(expected.match(/^WorkingDirectory=(.*)$/m)?.[1] || "");
+  return execMatch && envMatch && pathMatch && workingDirectoryMatch;
+}
+
+function normalizeSystemdValue(value: string) {
+  const trimmed = value.trim();
+  const unquoted = trimmed.length >= 2 && trimmed.startsWith("\"") && trimmed.endsWith("\"")
+    ? trimmed.slice(1, -1)
+    : trimmed;
+  return unquoted
+    .replace(/%%/g, "%")
+    .replace(/\\(["\\$` ])/g, "$1");
 }
 
 function isOwnedUnit(unit: string, spec: DaemonSpec) {
@@ -101,9 +171,7 @@ export async function inspect(spec: DaemonSpec, deps: NormalizedAutostartDeps): 
   const active = activeResult.stdout.trim() === "active";
   const expected = buildSystemdUnit(spec);
   const expectedExecStart = parseUnitExecStart(expected);
-  const correct = execStart === expectedExecStart
-    && unitEnvironmentLines(unit).join("\n") === unitEnvironmentLines(expected).join("\n")
-    && (unit.match(/^WorkingDirectory=(.*)$/m)?.[1]) === (expected.match(/^WorkingDirectory=(.*)$/m)?.[1]);
+  const correct = systemdUnitMatches(unit, expected, spec.bunBin);
   if (!correct) {
     return {
       platform: "linux",

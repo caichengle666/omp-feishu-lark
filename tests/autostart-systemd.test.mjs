@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { buildDaemonSpec } from "../src/daemon-spec.ts";
-import { buildSystemdUnit, ensure, inspect } from "../src/autostart/linux-systemd.ts";
+import { buildSystemdUnit, ensure, inspect, parseEnvironmentMap, parseExecStartArgs, systemdUnitMatches } from "../src/autostart/linux-systemd.ts";
 
 const spec = buildDaemonSpec({
   bunBin: "/usr/local/bin/bun",
@@ -13,6 +13,44 @@ const spec = buildDaemonSpec({
   pluginVersion: "0.4.40",
 });
 const systemdOnly = { skip: process.platform !== "linux" };
+
+test("parses systemd ExecStart arguments without requiring exact quoting", () => {
+  const args = parseExecStartArgs("\"/usr/local/bin/bun\" \"/home/user/.omp/extensions/feishu/support/feishu-supervisor.mjs\" --cwd \"/home/user/work dir\"");
+  assert.deepEqual(args, [
+    "/usr/local/bin/bun",
+    "/home/user/.omp/extensions/feishu/support/feishu-supervisor.mjs",
+    "--cwd",
+    "/home/user/work dir",
+  ]);
+});
+
+test("parses environment values and keeps version drift visible as data", () => {
+  const env = parseEnvironmentMap([
+    "Environment=OMP_CLI_PATH=\"/opt/omp/cli.js\"",
+    "Environment=PATH=\"/opt/bin:/usr/bin\"",
+    "Environment=FEISHU_PLUGIN_VERSION=\"0.4.45\"",
+  ].join("\n"));
+  assert.equal(env.OMP_CLI_PATH, "/opt/omp/cli.js");
+  assert.equal(env.PATH, "/opt/bin:/usr/bin");
+  assert.equal(env.FEISHU_PLUGIN_VERSION, "0.4.45");
+});
+
+test("systemd semantic comparison ignores version drift but catches real mismatches", () => {
+  const expected = [
+    "[Service]",
+    "ExecStart=\"/opt/bin/bun\" \"/opt/omp/feishu-supervisor.mjs\" --cwd \"/root\"",
+    "WorkingDirectory=/root",
+    "Environment=OMP_CLI_PATH=\"/opt/omp/cli.js\"",
+    "Environment=PI_FEISHU_DAEMON=\"1\"",
+    "Environment=PATH=\"/opt/bin:/usr/bin\"",
+    "Environment=FEISHU_PLUGIN_VERSION=\"0.4.44\"",
+  ].join("\n");
+  const versionDrift = expected.replace("0.4.44", "0.4.45");
+  assert.equal(systemdUnitMatches(versionDrift, expected, "/opt/bin/bun"), true);
+  assert.equal(systemdUnitMatches(expected + "\nEnvironment=UNRELATED=1", expected, "/opt/bin/bun"), true);
+  assert.equal(systemdUnitMatches(expected.replace("/opt/omp/cli.js", "/opt/wrong/cli.js"), expected, "/opt/bin/bun"), false);
+  assert.equal(systemdUnitMatches(expected.replace("/opt/bin:/usr/bin", "/usr/bin"), expected, "/opt/bin/bun"), false);
+});
 function makeDeps(overrides = {}) {
   const calls = [];
   const writes = [];
@@ -104,7 +142,22 @@ test("systemd inspect reports missing, healthy, disabled, and foreign states", s
   const stale = makeDeps({
     unit: buildSystemdUnit(spec).replace('FEISHU_PLUGIN_VERSION="0.4.40"', 'FEISHU_PLUGIN_VERSION="0.4.39"'),
   });
-  assert.equal((await inspect(spec, stale.deps)).state, "misconfigured");
+  assert.equal((await inspect(spec, stale.deps)).state, "healthy");
+
+  const extraEnv = makeDeps({
+    unit: healthyUnit + "\nEnvironment=UNRELATED=1",
+  });
+  assert.equal((await inspect(spec, extraEnv.deps)).state, "healthy");
+
+  const missingBunPath = makeDeps({
+    unit: healthyUnit.replace(/Environment=PATH="[^"]*"/, 'Environment=PATH="/usr/bin"'),
+  });
+  assert.equal((await inspect(spec, missingBunPath.deps)).state, "misconfigured");
+
+  const wrongOmp = makeDeps({
+    unit: healthyUnit.replace(spec.ompCliPath, "/opt/wrong/omp/cli.js"),
+  });
+  assert.equal((await inspect(spec, wrongOmp.deps)).state, "misconfigured");
 
   const foreignUnit = `[Service]\nExecStart=/opt/other/feishu-supervisor.mjs --cwd /tmp\n`;
   const foreign = makeDeps({ unit: foreignUnit });
