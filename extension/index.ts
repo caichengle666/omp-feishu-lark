@@ -356,6 +356,9 @@ export default function feishuExtension(pi: ExtensionAPI) {
       // 预热模型列表,避免第一次命令调用时等待 provider 超时
       conversations.warmupModels().catch(() => undefined);
       if (process.env.PI_FEISHU_DAEMON === "1") {
+        await syncOsAutostart().catch((error) => {
+          debugLog("feishu.autostart.sync_error", { error: error instanceof Error ? error.message : String(error) });
+        });
         await deliverUpgradeNotice().catch((error) => {
           console.error("[feishu] upgrade notice delivery failed:", error instanceof Error ? error.message : error);
         });
@@ -501,6 +504,20 @@ export default function feishuExtension(pi: ExtensionAPI) {
     }
     if (failed.length) writeJson(RESTART_NOTICE_PATH, { ...notice, targets: failed });
     else removePath(RESTART_NOTICE_PATH);
+  }
+
+  async function syncOsAutostart() {
+    const cfg = loadConfig();
+    if (!cfg?.autoStart) return;
+    // 升级会改变 FEISHU_PLUGIN_VERSION，过期 OS 自启动配置需要同步，避免 doctor 误报。
+    const current = await inspectAutoStart(daemonSpec());
+    if (current.state !== "misconfigured") return;
+    const result = await ensureAutoStart(daemonSpec(), true, {}, { start: false });
+    debugLog("feishu.autostart.synced", {
+      from: current.detail,
+      to: result.status.state,
+      message: result.message,
+    });
   }
 
   function versionReport(detailed = true) {

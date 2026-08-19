@@ -302,6 +302,9 @@ test("wires doctor and autostart through the cross-platform OS adapters", () => 
   const wrapperSource = readFileSync(join(repoRoot, "src", "autostart.ts"), "utf8");
   assert.match(source, /ensureAutoStart\(daemonSpec\(\)/);
   assert.match(source, /inspectAutoStart\(daemonSpec\(\)/);
+  assert.match(source, /async function syncOsAutostart\(\)/);
+  assert.match(source, /current\.state !== "misconfigured"/);
+  assert.match(source, /ensureAutoStart\(daemonSpec\(\), true, \{\}, \{ start: false \}\)/);
   assert.match(source, /if \(cmd === "autostart"\)[\s\S]*await remoteLifecycleAutostart\(\)/);
   assert.match(installerSource, /--install-service/);
   assert.match(installerSource, /ensureAutoStart\(serviceSpec/);
