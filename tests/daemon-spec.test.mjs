@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { delimiter, dirname, join } from "node:path";
+import { homedir } from "node:os";
 import test from "node:test";
 import { buildDaemonSpec } from "../src/daemon-spec.ts";
 
@@ -68,6 +69,13 @@ test("keeps runtime paths aligned when a custom OMP agent profile is used", () =
 test("omits plugin version env when the version is not known", () => {
   const spec = buildDaemonSpec({ ...baseInput, pluginVersion: undefined });
   assert.equal("FEISHU_PLUGIN_VERSION" in spec.env, false);
+});
+
+test("daemon spec injects home directory for systemd and installer", () => {
+  const spec = buildDaemonSpec(baseInput);
+  const expected = homedir();
+  if (process.platform === "win32") assert.equal(spec.env.USERPROFILE, expected);
+  else assert.equal(spec.env.HOME, expected);
 });
 
 test("preserves Windows paths with spaces as a spawn argument array", { skip: process.platform !== "win32" }, () => {

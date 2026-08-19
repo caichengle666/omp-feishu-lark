@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, w
 import { spawn, spawnSync } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { acquireInstallerLease, releaseInstallerLease } from "./installer-lock.js";
 import { isSupervisorProcessAlive, readSupervisorRecord, recordedProcessStatus, writeStopRequest } from "../support/feishu-supervisor.mjs";
 import { GATEWAY_LOCK_KEY, parseLocksFile, removeGatewayLockKey } from "./installer-state.js";
@@ -19,7 +19,7 @@ const packageManifest = JSON.parse(readFileSync(join(packageRoot, "package.json"
   version: string;
   dependencies?: Record<string, string>;
 };
-const homeDir = process.env.HOME || process.env.USERPROFILE;
+const homeDir = process.env.HOME || process.env.USERPROFILE || homedir();
 const timeoutSeconds = parsePositiveInt(process.env.OMP_FEISHU_TIMEOUT, 90);
 const networkPolicy = resolveUpgradeNetworkPolicy(process.env.OMP_FEISHU_NETWORK);
 const dnsArgs = bunDnsArgs(networkPolicy);

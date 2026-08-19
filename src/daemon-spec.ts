@@ -1,4 +1,5 @@
 import { delimiter, dirname, join } from "node:path";
+import { homedir } from "node:os";
 
 export type DaemonSpecInput = {
   bunBin: string;
@@ -9,6 +10,7 @@ export type DaemonSpecInput = {
   runtimeRoot?: string;
   pluginVersion?: string;
   path?: string;
+  homeDir?: string;
 };
 
 export type DaemonSpec = {
@@ -43,6 +45,7 @@ export function buildDaemonSpec(input: DaemonSpecInput): DaemonSpec {
     "-e", input.extensionPath,
   ];
   const bunDir = dirname(input.bunBin);
+  const homeDir = input.homeDir || homedir();
   const env: Record<string, string> = {
     OMP_CLI_PATH: input.ompCliPath,
     PI_CODING_AGENT_DIR: input.agentDir,
@@ -50,6 +53,8 @@ export function buildDaemonSpec(input: DaemonSpecInput): DaemonSpec {
     PATH: [bunDir, input.path ?? process.env.PATH ?? ""].filter(Boolean).join(delimiter),
   };
   if (input.pluginVersion) env.FEISHU_PLUGIN_VERSION = input.pluginVersion;
+  if (process.platform === "win32") env.USERPROFILE = homeDir;
+  else env.HOME = homeDir;
 
   return {
     bunBin: input.bunBin,

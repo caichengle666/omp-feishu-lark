@@ -99,6 +99,7 @@ test("installer derives runtime dependencies from the published package manifest
   const installerSource = readFileSync(join(repoRoot, "src", "cli.ts"), "utf8");
   assert.match(installerSource, /dependencies: packageManifest\.dependencies \|\| \{\}/);
   assert.doesNotMatch(installerSource, /"qrcode-terminal": "\^0\.12\.0"/);
+  assert.match(installerSource, /process\.env\.HOME \|\| process\.env\.USERPROFILE \|\| homedir\(\)/);
 });
 
 test("upgrade prepares the new version before stopping the running daemon/supervisor", () => {
