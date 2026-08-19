@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import test from "node:test";
 import { buildDaemonSpec } from "../src/daemon-spec.ts";
 
@@ -38,6 +38,16 @@ test("builds one supervisor to daemon launch spec for extension and installer", 
   assert.equal(spec.env.PI_CODING_AGENT_DIR, baseInput.agentDir);
   assert.equal(spec.env.PI_FEISHU_DAEMON, "1");
   assert.equal(spec.env.FEISHU_PLUGIN_VERSION, "0.4.40");
+  assert.ok((spec.env.PATH || "").split(delimiter).includes(dirname(baseInput.bunBin)));
+});
+
+test("adds the Bun directory ahead of inherited PATH", () => {
+  const inherited = ["/opt/bin", "/usr/bin"].join(delimiter);
+  const spec = buildDaemonSpec({ ...baseInput, path: inherited });
+  const entries = (spec.env.PATH || "").split(delimiter);
+  assert.equal(entries[0], dirname(baseInput.bunBin));
+  assert.ok(entries.includes("/opt/bin"));
+  assert.ok(entries.includes("/usr/bin"));
 });
 
 test("keeps runtime paths aligned when a custom OMP agent profile is used", () => {

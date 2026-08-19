@@ -52,6 +52,7 @@ test("launchd plist starts the shared supervisor at login", () => {
   assert.match(plist, new RegExp(spec.supervisorPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   assert.match(plist, /OMP_CLI_PATH/);
   assert.match(plist, /PI_FEISHU_DAEMON/);
+  assert.match(plist, /<key>PATH<\/key><string>.*<\/string>/);
 });
 
 test("launchd inspect reports missing, healthy, misconfigured, and foreign states", async () => {

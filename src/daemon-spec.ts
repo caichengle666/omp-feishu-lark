@@ -1,4 +1,4 @@
-import { dirname, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 
 export type DaemonSpecInput = {
   bunBin: string;
@@ -8,6 +8,7 @@ export type DaemonSpecInput = {
   agentDir: string;
   runtimeRoot?: string;
   pluginVersion?: string;
+  path?: string;
 };
 
 export type DaemonSpec = {
@@ -41,10 +42,12 @@ export function buildDaemonSpec(input: DaemonSpecInput): DaemonSpec {
     "--cwd", input.workspace,
     "-e", input.extensionPath,
   ];
+  const bunDir = dirname(input.bunBin);
   const env: Record<string, string> = {
     OMP_CLI_PATH: input.ompCliPath,
     PI_CODING_AGENT_DIR: input.agentDir,
     PI_FEISHU_DAEMON: "1",
+    PATH: [bunDir, input.path ?? process.env.PATH ?? ""].filter(Boolean).join(delimiter),
   };
   if (input.pluginVersion) env.FEISHU_PLUGIN_VERSION = input.pluginVersion;
 

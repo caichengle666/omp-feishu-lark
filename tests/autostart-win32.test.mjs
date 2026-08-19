@@ -53,6 +53,7 @@ test("Windows task XML registers the supervisor at logon", () => {
   assert.match(xml, new RegExp(spec.bunBin.replace(/[\\"']/g, "\\$&")));
   assert.match(xml, new RegExp(spec.supervisorPath.replace(/[\\"']/g, "\\$&")));
   assert.match(xml, new RegExp(spec.extensionPath.replace(/[\\"']/g, "\\$&")));
+  assert.ok("PATH" in spec.env);
 });
 
 test("Windows task inspect reports missing, healthy, disabled, and foreign states", async () => {

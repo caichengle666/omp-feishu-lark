@@ -49,6 +49,7 @@ test("systemd unit starts bun supervisor then the OMP daemon", systemdOnly, () =
   assert.match(unit, new RegExp(spec.supervisorPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   assert.match(unit, /Restart=on-failure/);
   assert.match(unit, /OMP_CLI_PATH/);
+  assert.match(unit, /Environment=PATH=/);
 });
 
 test("systemd unit writes an escaped absolute WorkingDirectory without surrounding quotes", systemdOnly, () => {
