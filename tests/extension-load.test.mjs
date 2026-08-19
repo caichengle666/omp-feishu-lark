@@ -137,6 +137,17 @@ test("upgrade pins the package version and runs the installer asynchronously", (
   assert.match(source, /if \(failed\.length\) writeJson\(UPGRADE_NOTICE_PATH/);
 });
 
+test("restart leaves a notice for the new daemon to deliver restart feedback", () => {
+  const configSource = readFileSync(join(repoRoot, "extension", "config.ts"), "utf8");
+  const source = readFileSync(extensionPath, "utf8");
+  assert.match(configSource, /RESTART_NOTICE_PATH = join\(ROOT_DIR, "restart-notice.json"\)/);
+  assert.match(source, /writeJson\(RESTART_NOTICE_PATH,/);
+  assert.match(source, /deliverRestartNotice\(\)/);
+  assert.match(source, /重启完成自检/);
+  assert.match(source, /if \(failed\.length\) writeJson\(RESTART_NOTICE_PATH/);
+});
+
+
 test("daemon takeover waits for the old owner without force-overwriting a live lock", () => {
   const source = readFileSync(extensionPath, "utf8");
   assert.match(source, /waitForTakeover\(start, 300_000\)/);

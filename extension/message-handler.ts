@@ -34,7 +34,7 @@ export class FeishuMessageHandler {
       lifecycle?: {
         start?: () => Promise<string | undefined>;
         stop?: () => Promise<string | undefined>;
-        restart?: () => Promise<string | undefined>;
+        restart?: (target?: { chatId: string; messageId: string; sessionKey: string; chatType: string }) => Promise<string | undefined>;
         autostart?: () => Promise<string | undefined>;
         reset?: () => Promise<string | undefined>;
       };
@@ -219,7 +219,14 @@ export class FeishuMessageHandler {
       }
       await transport.replyText(msg.messageId, `已收到 /feishu ${lifecycleName}，正在执行…`);
       try {
-        const report = await this.diagnostics?.lifecycle?.[lifecycleName]?.();
+        const report = lifecycleName === "restart"
+          ? await this.diagnostics?.lifecycle?.restart?.({
+              chatId: msg.chatId,
+              messageId: msg.messageId,
+              sessionKey: key,
+              chatType: msg.chatType,
+            })
+          : await this.diagnostics?.lifecycle?.[lifecycleName]?.();
         if (report && transport.isRunning?.() !== false) await transport.replyText(msg.messageId, report);
       } catch (error) {
         if (typeof transport.isRunning !== "function" || transport.isRunning()) {

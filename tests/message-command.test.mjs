@@ -74,6 +74,7 @@ test("non-administrators cannot execute lifecycle commands remotely", async () =
 test("administrators can execute lifecycle commands remotely", async () => {
   const replies = [];
   const calls = [];
+  const restartTargets = [];
   const transport = {
     replyText: async (_messageId, text) => { replies.push(text); },
     isRunning: () => true,
@@ -83,7 +84,7 @@ test("administrators can execute lifecycle commands remotely", async () => {
     lifecycle: {
       start: async () => { calls.push("start"); return "started"; },
       stop: async () => { calls.push("stop"); return "stopped"; },
-      restart: async () => { calls.push("restart"); return "restarted"; },
+      restart: async (target) => { calls.push("restart"); restartTargets.push(target); return "restarted"; },
       autostart: async () => { calls.push("autostart"); return "autostart on"; },
       reset: async () => { calls.push("reset"); return "resetted"; },
     },
@@ -103,4 +104,10 @@ test("administrators can execute lifecycle commands remotely", async () => {
   assert.equal(replies.length, 10);
   assert.ok(replies.some((text) => text === "已收到 /feishu restart，正在执行…"));
   assert.ok(replies.some((text) => text === "restarted"));
+  assert.deepEqual(restartTargets, [{
+    chatId: "oc_chat",
+    messageId: "om_lifecycle_admin",
+    sessionKey: "p2p:ou_user",
+    chatType: "p2p",
+  }]);
 });

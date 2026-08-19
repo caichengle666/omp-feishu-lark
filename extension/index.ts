@@ -7,7 +7,7 @@ import { getAgentDir } from "@oh-my-pi/pi-coding-agent";
 import { RpcClient } from "@oh-my-pi/pi-coding-agent/modes/rpc/rpc-client";
 import { buildModelCard, buildResumeCard, isAuthorizedCardAction, parseModelActionValue, parseResumePageActionValue, parseResumeSelectActionValue } from "./cards.js";
 import { isSupervisorProcessAlive, readSupervisorRecord, recordedProcessStatus, writeStopRequest } from "../support/feishu-supervisor.mjs";
-import { AGENT_DIR, BRIDGE_PATH, CONFIG_PATH, DAEMON_LOG_PATH, DEBUG_LOG_PATH, DEDUPE_PATH, ensureRoot, isFeishuAdmin, loadConfig, mask, readJson, removePath, ROOT_DIR, STATE_PATH, SUPERVISOR_PID_PATH, SUPERVISOR_STOP_PATH, UPGRADE_NOTICE_PATH, writeJson } from "./config.js";
+import { AGENT_DIR, BRIDGE_PATH, CONFIG_PATH, DAEMON_LOG_PATH, DEBUG_LOG_PATH, DEDUPE_PATH, ensureRoot, isFeishuAdmin, loadConfig, mask, readJson, removePath, RESTART_NOTICE_PATH, ROOT_DIR, STATE_PATH, SUPERVISOR_PID_PATH, SUPERVISOR_STOP_PATH, UPGRADE_NOTICE_PATH, writeJson } from "./config.js";
 import { debugLog, flushDebugLog } from "./debug.js";
 import { ensureAutoStart, inspectAutoStart } from "../src/autostart.js";
 import { buildDaemonSpec } from "../src/daemon-spec.js";
@@ -27,7 +27,7 @@ import { bunDnsArgs, compareVersions, registryNetworkAttempts, resolveTargetVers
 import { BotUnavailableError, FeishuTransport } from "./transport.js";
 import type { FeishuConfig, FeishuStatus } from "./types.js";
 
-type UpgradeNoticeTarget = {
+type NoticeTarget = {
   chatId: string;
   messageId?: string;
   sessionKey?: string;
@@ -37,7 +37,14 @@ type UpgradeNoticeTarget = {
 type UpgradeNotice = {
   from?: string;
   to?: string;
-  targets?: UpgradeNoticeTarget[];
+  targets?: NoticeTarget[];
+  at?: string;
+  chatId?: string;
+  sessionKey?: string;
+};
+
+type RestartNotice = {
+  targets?: NoticeTarget[];
   at?: string;
   chatId?: string;
   sessionKey?: string;
@@ -77,7 +84,7 @@ export default function feishuExtension(pi: ExtensionAPI) {
     lifecycle: {
       start: () => remoteLifecycleStart(),
       stop: () => remoteLifecycleStop(),
-      restart: () => remoteLifecycleRestart(),
+      restart: (target?: NoticeTarget) => remoteLifecycleRestart(target),
       autostart: () => remoteLifecycleAutostart(),
       reset: () => remoteLifecycleReset(),
     },
@@ -352,6 +359,9 @@ export default function feishuExtension(pi: ExtensionAPI) {
         await deliverUpgradeNotice().catch((error) => {
           console.error("[feishu] upgrade notice delivery failed:", error instanceof Error ? error.message : error);
         });
+        await deliverRestartNotice().catch((error) => {
+          console.error("[feishu] restart notice delivery failed:", error instanceof Error ? error.message : error);
+        });
       }
 
       return "started";
@@ -449,7 +459,7 @@ export default function feishuExtension(pi: ExtensionAPI) {
       `Runtime package: ${packageVersion}`,
       doctor,
     ].join("\n");
-    const failed: UpgradeNoticeTarget[] = [];
+    const failed: NoticeTarget[] = [];
     for (const target of targets) {
       try {
         if (target.messageId) await transport.replyText(target.messageId, text);
@@ -460,6 +470,37 @@ export default function feishuExtension(pi: ExtensionAPI) {
     }
     if (failed.length) writeJson(UPGRADE_NOTICE_PATH, { ...notice, targets: failed });
     else removePath(UPGRADE_NOTICE_PATH);
+  }
+
+  async function deliverRestartNotice() {
+    if (!existsSync(RESTART_NOTICE_PATH) || !transport) return;
+    const notice = readJson<RestartNotice>(RESTART_NOTICE_PATH, {});
+    const targets = notice.targets?.length
+      ? notice.targets
+      : notice.chatId
+        ? [{ chatId: notice.chatId, sessionKey: notice.sessionKey }]
+        : [];
+    if (!targets.length) {
+      removePath(RESTART_NOTICE_PATH);
+      return;
+    }
+
+    const doctor = await doctorReport().catch((error) => `Feishu doctor failed: ${error instanceof Error ? error.message : String(error)}`);
+    const text = [
+      `重启完成自检${transport.isRunning() ? "通过" : "失败"}`,
+      doctor,
+    ].join("\n");
+    const failed: NoticeTarget[] = [];
+    for (const target of targets) {
+      try {
+        if (target.messageId) await transport.replyText(target.messageId, text);
+        else await transport.sendText(target.chatId, text);
+      } catch {
+        failed.push(target);
+      }
+    }
+    if (failed.length) writeJson(RESTART_NOTICE_PATH, { ...notice, targets: failed });
+    else removePath(RESTART_NOTICE_PATH);
   }
 
   function versionReport(detailed = true) {
@@ -668,10 +709,19 @@ export default function feishuExtension(pi: ExtensionAPI) {
     return result.status === "none" ? "飞书连接未在运行。" : "飞书连接已停止。";
   }
 
-  async function remoteLifecycleRestart() {
+  async function remoteLifecycleRestart(target?: NoticeTarget) {
     if (process.env.PI_FEISHU_DAEMON === "1") {
       if (pendingDaemonLifecycle) return `已有飞书${pendingDaemonLifecycle === "restart" ? "重启" : "停止"}操作正在执行，请等待完成。`;
       if (!hasLiveSupervisor()) throw new Error("无法确认 supervisor 正在运行，已拒绝重启以避免连接无法自动恢复。请运行 /feishu doctor 后重试。");
+      try {
+        if (target?.chatId) {
+          // 与升级通知同机制：新 daemon 连上 WS 后补发重启完成自检。
+          writeJson(RESTART_NOTICE_PATH, {
+            targets: [target],
+            at: new Date().toISOString(),
+          } satisfies RestartNotice);
+        }
+      } catch {}
       scheduleDaemonExit("restart");
       return "飞书连接正在重启，数秒后会自动恢复。";
     }
@@ -714,7 +764,7 @@ export default function feishuExtension(pi: ExtensionAPI) {
     return "飞书插件已重置并停止，请重新运行 /feishu setup。";
   }
 
-  async function requestUpgrade(targetVersion: string, noticeTarget?: UpgradeNoticeTarget, onProgress?: (phase: string) => void): Promise<string> {
+  async function requestUpgrade(targetVersion: string, noticeTarget?: NoticeTarget, onProgress?: (phase: string) => void): Promise<string> {
     if (upgradeInFlight) return "已有升级任务正在执行，请等待升级完成通知。";
     upgradeInFlight = true;
     try {
@@ -724,7 +774,7 @@ export default function feishuExtension(pi: ExtensionAPI) {
     }
   }
 
-async function upgradeDaemon(targetVersion: string, noticeTarget?: UpgradeNoticeTarget, onProgress?: (phase: string) => void): Promise<string> {
+async function upgradeDaemon(targetVersion: string, noticeTarget?: NoticeTarget, onProgress?: (phase: string) => void): Promise<string> {
     const current = pluginVersion();
     const spec = daemonSpec();
     const networkPolicy = resolveUpgradeNetworkPolicy(process.env.OMP_FEISHU_NETWORK);
@@ -800,7 +850,7 @@ async function upgradeDaemon(targetVersion: string, noticeTarget?: UpgradeNotice
       try {
         let targetForNotice = noticeTarget;
         if (!targetForNotice) {
-          const routes = readJson<{ routes?: Record<string, UpgradeNoticeTarget & { updatedAt?: number }> }>(BRIDGE_PATH, { routes: {} }).routes || {};
+          const routes = readJson<{ routes?: Record<string, NoticeTarget & { updatedAt?: number }> }>(BRIDGE_PATH, { routes: {} }).routes || {};
           targetForNotice = Object.values(routes)
             .filter((route) => Boolean(route.chatId))
             .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))[0];
