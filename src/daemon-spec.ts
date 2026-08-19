@@ -53,8 +53,8 @@ export function buildDaemonSpec(input: DaemonSpecInput): DaemonSpec {
     PATH: [bunDir, input.path ?? process.env.PATH ?? ""].filter(Boolean).join(delimiter),
   };
   if (input.pluginVersion) env.FEISHU_PLUGIN_VERSION = input.pluginVersion;
-  if (process.platform === "win32") env.USERPROFILE = homeDir;
-  else env.HOME = homeDir;
+  env.HOME = homeDir;
+  env.USERPROFILE = homeDir;
 
   return {
     bunBin: input.bunBin,

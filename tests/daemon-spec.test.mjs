@@ -74,8 +74,8 @@ test("omits plugin version env when the version is not known", () => {
 test("daemon spec injects home directory for systemd and installer", () => {
   const spec = buildDaemonSpec(baseInput);
   const expected = homedir();
-  if (process.platform === "win32") assert.equal(spec.env.USERPROFILE, expected);
-  else assert.equal(spec.env.HOME, expected);
+  assert.equal(spec.env.HOME, expected);
+  assert.equal(spec.env.USERPROFILE, expected);
 });
 
 test("preserves Windows paths with spaces as a spawn argument array", { skip: process.platform !== "win32" }, () => {
