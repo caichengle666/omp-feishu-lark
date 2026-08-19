@@ -35,7 +35,9 @@ export class GatewayLockHandle {
   private heartbeat: NodeJS.Timeout | undefined;
   private onLost: (() => void | Promise<void>) | undefined;
 
-  constructor(readonly owner: GatewayOwner) {}
+  owner: GatewayOwner;
+
+  constructor(owner: GatewayOwner) { this.owner = owner; }
 
   setOnLost(handler: () => void | Promise<void>) { this.onLost = handler; }
 
@@ -59,7 +61,9 @@ export class GatewayLockHandle {
         lostOwnership = true;
         return;
       }
-      locks[LOCK_KEY] = { ...current, heartbeatAt: new Date().toISOString(), status };
+      const now = new Date().toISOString();
+      locks[LOCK_KEY] = { ...current, heartbeatAt: now, status };
+      this.owner = { ...current, heartbeatAt: now, status };
       writeLocksFile(locks);
     });
     if (lostOwnership) {
