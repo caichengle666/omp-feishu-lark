@@ -427,9 +427,9 @@ export default function feishuExtension(pi: ExtensionAPI) {
   }
 
   function pluginVersion() {
-    if (process.env.FEISHU_PLUGIN_VERSION) return process.env.FEISHU_PLUGIN_VERSION;
     const runtimeVersion = runtimePackageVersion();
     if (runtimeVersion) return runtimeVersion;
+    if (process.env.FEISHU_PLUGIN_VERSION) return process.env.FEISHU_PLUGIN_VERSION;
     try {
       const lockPath = join(getAgentDir(), "..", "plugins", "omp-plugins.lock.json");
       const lock = JSON.parse(readFileSync(lockPath, "utf8"));
@@ -511,7 +511,7 @@ export default function feishuExtension(pi: ExtensionAPI) {
     if (!cfg?.autoStart) return;
     // 升级会改变 FEISHU_PLUGIN_VERSION，过期 OS 自启动配置需要同步，避免 doctor 误报。
     const current = await inspectAutoStart(daemonSpec());
-    if (current.state !== "misconfigured") return;
+    if (current.state !== "misconfigured" && !current.versionStale) return;
     const result = await ensureAutoStart(daemonSpec(), true, {}, { start: false });
     debugLog("feishu.autostart.synced", {
       from: current.detail,

@@ -172,6 +172,8 @@ export async function inspect(spec: DaemonSpec, deps: NormalizedAutostartDeps): 
   const expected = buildSystemdUnit(spec);
   const expectedExecStart = parseUnitExecStart(expected);
   const correct = systemdUnitMatches(unit, expected, spec.bunBin);
+  const versionStale = parseEnvironmentMap(unit).FEISHU_PLUGIN_VERSION
+    !== parseEnvironmentMap(expected).FEISHU_PLUGIN_VERSION;
   if (!correct) {
     return {
       platform: "linux",
@@ -180,6 +182,7 @@ export async function inspect(spec: DaemonSpec, deps: NormalizedAutostartDeps): 
       detail: `${SERVICE_NAME} 配置与当前安装不一致：${execStart}`,
       enabled,
       active,
+      versionStale,
     };
   }
   if (!enabled) {
@@ -190,6 +193,7 @@ export async function inspect(spec: DaemonSpec, deps: NormalizedAutostartDeps): 
       detail: `${SERVICE_NAME} 配置正确但未启用`,
       enabled: false,
       active,
+      versionStale,
     };
   }
   return {
@@ -199,6 +203,7 @@ export async function inspect(spec: DaemonSpec, deps: NormalizedAutostartDeps): 
     detail: `${SERVICE_NAME} enabled=${enabled} active=${active}`,
     enabled: true,
     active,
+    versionStale,
   };
 }
 
@@ -208,7 +213,7 @@ export async function ensure(
   deps: NormalizedAutostartDeps,
   options: AutostartOptions,
 ): Promise<AutostartResult> {
-  const current = await inspect(spec, deps);
+  let current = await inspect(spec, deps);
   if (current.state === "foreign") {
     return {
       message: `拒绝覆盖其他应用的 systemd service：${current.detail}`,
@@ -248,12 +253,15 @@ export async function ensure(
   }
 
   if (current.state === "healthy") {
-    if (!current.enabled) deps.run("systemctl", ["enable", SERVICE_NAME]);
-    if (options.start && !current.active) deps.run("systemctl", ["start", SERVICE_NAME]);
-    return {
-      message: `Linux systemd 自启动已就绪：${current.detail}`,
-      status: current,
-    };
+    if (!current.versionStale) {
+      if (!current.enabled) deps.run("systemctl", ["enable", SERVICE_NAME]);
+      if (options.start && !current.active) deps.run("systemctl", ["start", SERVICE_NAME]);
+      return {
+        message: `Linux systemd 自启动已就绪：${current.detail}`,
+        status: current,
+      };
+    }
+    current = { ...current, state: "misconfigured" };
   }
   if (current.state === "disabled") {
     if (!deps.isRoot()) {

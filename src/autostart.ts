@@ -48,6 +48,7 @@ export type AutostartStatus = {
   detail?: string;
   enabled?: boolean;
   active?: boolean;
+  versionStale?: boolean;
 };
 
 export type AutostartResult = {

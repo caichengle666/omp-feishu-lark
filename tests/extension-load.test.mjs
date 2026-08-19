@@ -254,6 +254,9 @@ test("keeps the release version readable after the installer rewrites runtime pa
   const daemonSpecSource = readFileSync(join(repoRoot, "src", "daemon-spec.ts"), "utf8");
   assert.match(source, /omp-plugins\.lock\.json/);
   assert.match(source, /FEISHU_PLUGIN_VERSION/);
+  assert.match(source, /const runtimeVersion = runtimePackageVersion\(\);/);
+  assert.match(source, /if \(runtimeVersion\) return runtimeVersion;/);
+  assert.match(source, /if \(process\.env\.FEISHU_PLUGIN_VERSION\) return process\.env\.FEISHU_PLUGIN_VERSION;/);
   assert.match(installerSource, /version: packageManifest\.version/);
   assert.match(installerSource, /pluginVersion: packageManifest\.version/);
   assert.match(daemonSpecSource, /FEISHU_PLUGIN_VERSION/);

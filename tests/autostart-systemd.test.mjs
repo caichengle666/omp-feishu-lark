@@ -142,7 +142,9 @@ test("systemd inspect reports missing, healthy, disabled, and foreign states", s
   const stale = makeDeps({
     unit: buildSystemdUnit(spec).replace('FEISHU_PLUGIN_VERSION="0.4.40"', 'FEISHU_PLUGIN_VERSION="0.4.39"'),
   });
-  assert.equal((await inspect(spec, stale.deps)).state, "healthy");
+  const staleStatus = await inspect(spec, stale.deps);
+  assert.equal(staleStatus.state, "healthy");
+  assert.equal(staleStatus.versionStale, true);
 
   const extraEnv = makeDeps({
     unit: healthyUnit + "\nEnvironment=UNRELATED=1",
@@ -175,6 +177,15 @@ test("systemd ensure writes the unit and starts the service when no supervisor i
   assert.ok(calls.some((call) => call.includes("daemon-reload")));
   assert.ok(calls.some((call) => call.includes("enable")));
   assert.ok(calls.some((call) => call.includes("start")));
+});
+
+test("systemd ensure rewrites a healthy unit when its plugin version is stale", systemdOnly, async () => {
+  const unit = buildSystemdUnit(spec).replace('FEISHU_PLUGIN_VERSION="0.4.40"', 'FEISHU_PLUGIN_VERSION="0.4.39"');
+  const { deps, writes, renames } = makeDeps({ unit, active: "active" });
+  const result = await ensure(spec, true, deps, { start: false });
+  assert.equal(result.status.state, "healthy");
+  assert.ok(writes.length >= 1);
+  assert.ok(renames.length >= 1);
 });
 
 test("systemd ensure disables without stopping a running connection", systemdOnly, async () => {
