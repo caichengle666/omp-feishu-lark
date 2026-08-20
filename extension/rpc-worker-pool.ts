@@ -1,10 +1,18 @@
 import { RpcClient } from "@oh-my-pi/pi-coding-agent/modes/rpc/rpc-client";
+import type { ThinkingLevel } from "@oh-my-pi/pi-agent-core";
 import { debugLog } from "./debug.js";
 import type { TaskStatusSink } from "./task-status-card.js";
+import type { FeishuThinkingLevel } from "./types.js";
 
-export type RpcWorkerClient = Pick<RpcClient,
+type RpcWorkerCore = Pick<RpcClient,
   "start" | "stop" | "promptAndWait" | "abort" | "getState" | "getLastAssistantText" | "getMessages" | "setModel" | "switchSession" | "onSessionEvent"
 >;
+
+type RpcWorkerOptional = Partial<Pick<RpcClient,
+  "setThinkingLevel" | "compact" | "setAutoCompaction" | "setSubagentSubscription" | "onSubagentLifecycle" | "onSubagentProgress" | "getAvailableCommands"
+>>;
+
+export type RpcWorkerClient = RpcWorkerCore & RpcWorkerOptional;
 
 export type RpcWorkerFactory = (options: { cwd: string }) => RpcWorkerClient;
 
@@ -20,6 +28,8 @@ export type RpcPromptOptions = {
   cwd: string;
   sessionFile?: string;
   model?: { provider: string; id: string };
+  thinkingLevel?: FeishuThinkingLevel;
+  autoCompaction?: boolean;
   text: string;
   images: Array<{ type: "image"; data: string; mimeType: string }>;
   timeoutMs: number;
@@ -58,6 +68,11 @@ export class FeishuRpcWorkerPool {
     }
     slot.busy = true;
     let unsubscribe = () => {};
+    let unsubscribeLifecycle: (() => void) | undefined;
+    let unsubscribeProgress: (() => void) | undefined;
+    if (slot.client.setSubagentSubscription) {
+      await slot.client.setSubagentSubscription("progress").catch(() => undefined);
+    }
     try {
       const initialState = await slot.client.getState();
       options.onSessionReady?.(initialState.sessionId);
@@ -65,7 +80,21 @@ export class FeishuRpcWorkerPool {
         options.status?.updateFromEvent(event);
         options.onSessionEvent?.(initialState.sessionId, event);
       });
+      unsubscribeLifecycle = slot.client.onSubagentLifecycle?.((payload) => {
+        options.status?.updateFromSubagentLifecycle?.(payload);
+      });
+      unsubscribeProgress = slot.client.onSubagentProgress?.((payload) => {
+        options.status?.updateFromSubagentProgress?.(payload);
+      });
       if (options.model) await slot.client.setModel(options.model.provider, options.model.id);
+      if (options.thinkingLevel) {
+        if (!slot.client.setThinkingLevel) throw new Error("当前 OMP 不支持思考强度切换。");
+        await slot.client.setThinkingLevel(options.thinkingLevel as ThinkingLevel);
+      }
+      if (options.autoCompaction !== undefined) {
+        if (!slot.client.setAutoCompaction) throw new Error("当前 OMP 不支持自动压缩开关。");
+        await slot.client.setAutoCompaction(options.autoCompaction);
+      }
       if (this.abortRequested.has(key)) throw new Error("Prompt cancelled before submission");
       await slot.client.promptAndWait(options.text, options.images.length ? options.images : undefined, options.timeoutMs);
       const [text, state, messages] = await Promise.all([
@@ -87,6 +116,8 @@ export class FeishuRpcWorkerPool {
       throw error;
     } finally {
       unsubscribe();
+      unsubscribeLifecycle?.();
+      unsubscribeProgress?.();
       slot.busy = false;
       slot.lastUsedAt = Date.now();
       this.activePromptKeys.delete(key);
@@ -112,6 +143,22 @@ export class FeishuRpcWorkerPool {
   async reset(key: string): Promise<void> {
     const slot = this.workers.get(key);
     if (slot) await this.dropWorker(key, slot);
+  }
+
+  async compact(key: string, options: { cwd: string; sessionFile?: string; instructions?: string; autoCompaction?: boolean }) {
+    const slot = await this.ensureWorker(key, options.cwd, options.sessionFile);
+    if (options.autoCompaction !== undefined) {
+      if (!slot.client.setAutoCompaction) throw new Error("当前 OMP 不支持自动压缩开关。");
+      await slot.client.setAutoCompaction(options.autoCompaction);
+    }
+    if (!slot.client.compact) throw new Error("当前 OMP 不支持手动压缩。");
+    return slot.client.compact(options.instructions);
+  }
+
+  async availableCommands(key: string, options: { cwd: string; sessionFile?: string }) {
+    const slot = await this.ensureWorker(key, options.cwd, options.sessionFile);
+    if (!slot.client.getAvailableCommands) throw new Error("当前 OMP 不支持命令发现。");
+    return slot.client.getAvailableCommands();
   }
 
   async disposeAll(): Promise<void> {

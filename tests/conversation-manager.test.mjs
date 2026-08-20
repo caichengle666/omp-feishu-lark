@@ -102,3 +102,46 @@ test("new session model resolution does not await its own cached creation promis
 
   assert.equal(result, defaultModel);
 });
+
+test("compact conversation through the RPC pool forwards stored auto-compaction", async () => {
+  const calls = [];
+  const pool = {
+    compact: async (key, options) => {
+      calls.push({ key, options });
+      return { summary: "compacted", tokensBefore: 1200 };
+    },
+  };
+  const manager = new ConversationManager(process.cwd(), undefined, {}, pool);
+  const settingReplies = [];
+  await manager.setAutoCompaction("chat", true, async (text) => settingReplies.push(text));
+  assert.deepEqual(settingReplies, ["已开启自动上下文压缩，后续任务生效。"]);
+
+  const replies = [];
+  await manager.compactConversation("chat", "keep API details", async (text) => replies.push(text));
+  assert.deepEqual(calls, [{
+    key: "chat",
+    options: {
+      cwd: process.cwd(),
+      sessionFile: undefined,
+      instructions: "keep API details",
+      autoCompaction: true,
+    },
+  }]);
+  assert.match(replies[0], /上下文已压缩/);
+  assert.match(replies[0], /摘要：compacted/);
+});
+
+test("list OMP commands through the RPC pool", async () => {
+  const calls = [];
+  const pool = {
+    availableCommands: async (key, options) => {
+      calls.push({ key, options });
+      return [{ name: "compact", description: "Manually compact" }];
+    },
+  };
+  const manager = new ConversationManager(process.cwd(), undefined, {}, pool);
+  const commands = await manager.listOmpCommands("chat");
+  assert.deepEqual(commands, [{ name: "compact", description: "Manually compact" }]);
+  assert.equal(calls[0].key, "chat");
+  assert.equal(calls[0].options.cwd, process.cwd());
+});

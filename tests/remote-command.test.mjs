@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "bun:test";
 import { buildUpgradeProgressCard, FeishuMessageHandler, formatUpgradeRemaining } from "../extension/message-handler.ts";
+import { feishuHelpText, formatOmpCommands } from "../extension/help.ts";
 import { parseBotCommand } from "../extension/messages.ts";
 
 const message = {
@@ -147,11 +148,27 @@ test("group state-changing commands require an administrator", async () => {
   assert.equal(await handler.handleCommand(groupMessage, "group:oc_chat", "/model"), true);
   assert.equal(await handler.handleCommand(groupMessage, "group:oc_chat", "/resume"), true);
   assert.equal(await handler.handleCommand(groupMessage, "group:oc_chat", "/stop"), true);
+  assert.equal(await handler.handleCommand(groupMessage, "group:oc_chat", "/effort high"), true);
+  assert.equal(await handler.handleCommand(groupMessage, "group:oc_chat", "/compact"), true);
+  assert.equal(await handler.handleCommand(groupMessage, "group:oc_chat", "/autocompact on"), true);
   assert.equal(newConversation, false);
   assert.equal(listedModels, false);
   assert.equal(listed, false);
   assert.equal(stopped, false);
-  assert.deepEqual(replies.map((text) => text.includes("管理员权限")), [true, true, true, true]);
+  assert.equal(replies.length, 7);
+  assert.deepEqual(replies.map((text) => text.includes("管理员权限")), [true, true, true, true, true, true, true]);
+});
+
+test("feishu help documents the effort command", () => {
+  const help = feishuHelpText([{ name: "compact", description: "Manually compact the session context", source: "builtin" }]);
+  assert.match(help, /\/effort/);
+  assert.match(help, /inherit\/off\/minimal/);
+  assert.match(help, /\/compact/);
+  assert.match(help, /\/autocompact/);
+  assert.match(help, /\/commands/);
+  assert.match(formatOmpCommands([
+    { name: "review", aliases: ["code-review"], description: "Review the current diff", input: { hint: "depth" } },
+  ]), /\/review、\/code-review depth - Review the current diff/);
 });
 
 test("remote upgrade displays a countdown card and updates its phase", async () => {

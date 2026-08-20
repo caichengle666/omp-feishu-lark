@@ -23,12 +23,13 @@ export type ResumeSessionPage = {
   items: ResumeSessionItem[];
 };
 
-export function buildModelCard(key: string, models: any[], currentModel: any, ownerOpenId?: string, chatId?: string) {
+export function buildModelCard(key: string, models: any[], currentModel: any, ownerOpenId?: string, chatId?: string, currentThinkingLevel?: string) {
   const current = modelLabel(currentModel);
+  const thinking = currentThinkingLevel || "跟随 OMP 默认";
   const elements: any[] = [
     {
       tag: "markdown",
-      content: `当前模型：**${current}**\n点击下面的按钮即可切换当前飞书会话使用的模型。`,
+      content: `当前模型：**${current}**\n当前思考强度：**${thinking}**\n点击下面的按钮即可切换当前飞书会话使用的模型。`,
     },
   ];
 

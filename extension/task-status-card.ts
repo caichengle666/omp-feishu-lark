@@ -7,6 +7,8 @@ export type TaskStatus = "running" | "done" | "failed" | "stopped" | "inactive";
 export type TaskStatusSink = {
   readonly runId: string;
   updateFromEvent(event: unknown): void;
+  updateFromSubagentLifecycle?(payload: any): void;
+  updateFromSubagentProgress?(payload: any): void;
   setPhase?(phase: string): Promise<void>;
   stopImmediately(phase?: string): Promise<void>;
   finish(status: Exclude<TaskStatus, "running" | "inactive">, phase?: string): Promise<void>;
@@ -42,6 +44,7 @@ export class TaskStatusCard implements TaskStatusSink {
   private patchQueue: Promise<void> = Promise.resolve();
   private version = 0;
   private readonly artifactPaths = new Map<string, boolean>();
+  private readonly subagents = new Map<string, string>();
 
   constructor(
     private readonly key: string,
@@ -89,6 +92,22 @@ export class TaskStatusCard implements TaskStatusSink {
     const phase = describePiEvent(event);
     if (!phase) return;
     void this.updateRunningPhase(phase);
+  }
+
+  updateFromSubagentLifecycle(payload: any) {
+    if (this.status !== "running") return;
+    const phase = describeSubagentLifecycle(payload);
+    if (!phase) return;
+    this.subagents.set(subagentKey(payload), phase);
+    this.updateRunningPhase(phase);
+  }
+
+  updateFromSubagentProgress(payload: any) {
+    if (this.status !== "running") return;
+    const phase = describeSubagentProgress(payload);
+    if (!phase) return;
+    this.subagents.set(subagentKey(payload), phase);
+    this.updateRunningPhase(phase);
   }
 
   async setPhase(phase: string) {
@@ -284,13 +303,14 @@ export class TaskStatusCard implements TaskStatusSink {
       elapsedMs: Date.now() - this.startedAt,
       toolCalls: this.toolCalls,
       currentTool: this.currentTool,
+      subagentCount: this.subagents.size,
       ownerOpenId: this.ownerOpenId,
       chatId: this.chatId,
     });
   }
 }
 
-export function buildTaskStatusCard(input: { key: string; status: TaskStatus; phase?: string; runId?: string; elapsedMs?: number; toolCalls?: number; currentTool?: string; ownerOpenId?: string; chatId?: string }) {
+export function buildTaskStatusCard(input: { key: string; status: TaskStatus; phase?: string; runId?: string; elapsedMs?: number; toolCalls?: number; currentTool?: string; subagentCount?: number; ownerOpenId?: string; chatId?: string }) {
   const running = input.status === "running";
   return {
     config: {
@@ -318,6 +338,13 @@ export function buildTaskStatusCard(input: { key: string; status: TaskStatus; ph
             `工具调用：${input.toolCalls || 0} 次`,
             ...(input.currentTool ? [`当前工具：${normalizePhase(input.currentTool)}`] : []),
           ].join("\n"),
+        },
+      }] : []),
+      ...(input.subagentCount ? [{
+        tag: "div",
+        text: {
+          tag: "lark_md",
+          content: `子代理任务：${input.subagentCount} 个`,
         },
       }] : []),
       ...(running ? [{
@@ -372,6 +399,39 @@ export function describePiEvent(event: unknown): string | undefined {
   }
 }
 
+export function describeSubagentLifecycle(payload: any): string | undefined {
+  const name = subagentLabel(payload);
+  switch (payload?.status) {
+    case "started":
+      return `子代理 ${name} 已启动`;
+    case "completed":
+      return `子代理 ${name} 已完成`;
+    case "failed":
+      return `子代理 ${name} 失败`;
+    case "aborted":
+      return `子代理 ${name} 已中止`;
+    default:
+      return undefined;
+  }
+}
+
+export function describeSubagentProgress(payload: any): string | undefined {
+  const progress = payload?.progress || {};
+  const statusLabel = progress.status === "pending"
+    ? "等待"
+    : progress.status === "completed"
+      ? "完成"
+      : progress.status === "failed"
+        ? "失败"
+        : progress.status === "aborted"
+          ? "中止"
+          : "运行中";
+  const parts = [`子代理 ${subagentLabel(payload)}：${statusLabel}`];
+  if (progress.currentTool) parts.push(`工具 ${progress.currentTool}`);
+  if (progress.lastIntent) parts.push(progress.lastIntent);
+  return parts.join(" · ");
+}
+
 function describeAssistantEvent(event: any) {
   if (!event?.type) return undefined;
   if (event.type === "toolcall_end" && event.toolCall?.name) return `工具调用已生成：${event.toolCall.name}`;
@@ -385,6 +445,14 @@ function normalizePhase(text: string) {
   const compact = text.replace(/\s+/g, " ").trim();
   if (compact.length <= MAX_PHASE_CHARS) return compact;
   return `${compact.slice(0, MAX_PHASE_CHARS - 1)}…`;
+}
+
+function subagentLabel(payload: any) {
+  return payload?.agent || payload?.progress?.agent || payload?.id || "子代理";
+}
+
+function subagentKey(payload: any) {
+  return payload?.progress?.id || payload?.id || `${payload?.index || 0}:${subagentLabel(payload)}`;
 }
 
 function titleForStatus(status: TaskStatus) {

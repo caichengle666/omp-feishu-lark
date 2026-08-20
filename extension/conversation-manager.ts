@@ -2,6 +2,7 @@ import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { AgentSession, SessionInfo } from "@oh-my-pi/pi-coding-agent";
+import type { ConfiguredThinkingLevel } from "@oh-my-pi/pi-coding-agent/thinking";
 import {
   createAgentSession,
   discoverAuthStorage,
@@ -15,7 +16,7 @@ import { debugLog } from "./debug.js";
 import { waitForPrompt } from "./prompt-timeout.js";
 import type { ResumeScope, ResumeSessionPage } from "./cards.js";
 import type { TaskStatusSink } from "./task-status-card.js";
-import type { FeishuState } from "./types.js";
+import type { FeishuState, FeishuThinkingLevel } from "./types.js";
 import type { FeishuRpcWorkerPool } from "./rpc-worker-pool.js";
 
 type ActiveRun = {
@@ -63,6 +64,8 @@ export class ConversationManager {
     this.state.sessions ||= {};
     this.state.history ||= {};
     this.state.models ||= {};
+    this.state.thinkingLevels ||= {};
+    this.state.autoCompaction ||= {};
     this.state.workspaces ||= {};
     this.loadSettingsDefault();
   }
@@ -302,6 +305,79 @@ export class ConversationManager {
     await next;
   }
 
+  async selectThinkingLevel(key: string, level: FeishuThinkingLevel, onReply: (text: string) => Promise<void>) {
+    const previous = this.previousTurn(key);
+    const next = previous.then(async () => {
+      this.state.thinkingLevels![key] = level;
+      writeJson(STATE_PATH, this.state);
+      const cached = this.sessions.get(key);
+      if (cached) {
+        try { (await cached).dispose(); } catch {}
+      }
+      this.sessions.delete(key);
+      await this.rpcWorkers?.reset(key);
+      await onReply(`已切换思考强度为 ${level}，后续任务生效。`);
+    }).catch(async (error) => {
+      await onReply(`OMP error: ${error instanceof Error ? error.message : String(error)}`);
+    });
+    this.queues.set(key, next);
+    await next;
+  }
+
+  getSelectedThinkingLevel(key: string): FeishuThinkingLevel | undefined {
+    return this.state.thinkingLevels?.[key];
+  }
+
+  getAutoCompaction(key: string): boolean | undefined {
+    return this.state.autoCompaction?.[key];
+  }
+
+  async setAutoCompaction(key: string, enabled: boolean, onReply: (text: string) => Promise<void>) {
+    const previous = this.previousTurn(key);
+    const next = previous.then(async () => {
+      this.state.autoCompaction![key] = enabled;
+      writeJson(STATE_PATH, this.state);
+      const cached = this.sessions.get(key);
+      if (cached) {
+        const session = await cached;
+        session.setAutoCompactionEnabled(enabled);
+      }
+      await onReply(`已${enabled ? "开启" : "关闭"}自动上下文压缩，后续任务生效。`);
+    }).catch(async (error) => {
+      await onReply(`OMP error: ${error instanceof Error ? error.message : String(error)}`);
+    });
+    this.queues.set(key, next);
+    await next;
+  }
+
+  async compactConversation(key: string, instructions: string | undefined, onReply: (text: string) => Promise<void>) {
+    const previous = this.previousTurn(key);
+    const next = previous.then(async () => {
+      const autoCompaction = this.getAutoCompaction(key);
+      const result = this.rpcWorkers
+        ? await this.rpcWorkers.compact(key, {
+            cwd: this.getWorkspace(key),
+            sessionFile: this.state.sessions[key],
+            instructions,
+            autoCompaction,
+          })
+        : await (await this.getSession(key)).compact(instructions);
+      await onReply(formatCompactionResult(result));
+    }).catch(async (error) => {
+      await onReply(`上下文压缩失败：${error instanceof Error ? error.message : String(error)}`);
+    });
+    this.queues.set(key, next);
+    await next;
+  }
+
+  async listOmpCommands(key: string) {
+    if (!this.rpcWorkers) return [];
+    return this.rpcWorkers.availableCommands(key, {
+      cwd: this.getWorkspace(key),
+      sessionFile: this.state.sessions[key],
+    });
+  }
+
   getWorkspace(key: string) {
     return this.state.workspaces?.[key] || this.cwd;
   }
@@ -411,7 +487,7 @@ export class ConversationManager {
     }
     this.sessions.clear();
     this.queues.clear();
-    this.state = { sessions: {}, history: {}, models: {}, workspaces: {} };
+    this.state = { sessions: {}, history: {}, models: {}, thinkingLevels: {}, autoCompaction: {}, workspaces: {} };
   }
 
   private getSession(key: string): Promise<AgentSession> {
@@ -502,7 +578,10 @@ export class ConversationManager {
         const base = Array.isArray(defaultPrompt) ? defaultPrompt.join("\n\n") : defaultPrompt;
         return base?.trim() ? `${base}\n\n${extra}` : extra;
       },
+      thinkingLevel: this.getSelectedThinkingLevel(key) as ConfiguredThinkingLevel,
     });
+    const autoCompaction = this.getAutoCompaction(key);
+    if (autoCompaction !== undefined) session.setAutoCompactionEnabled(autoCompaction);
 
     this.bridge?.attachSession(key, session.sessionId);
     session.subscribe((event) => {
@@ -536,6 +615,8 @@ export class ConversationManager {
         cwd: this.getWorkspace(key),
         sessionFile: this.state.sessions[key],
         model: model ? { provider: model.provider, id: model.id } : undefined,
+        thinkingLevel: this.getSelectedThinkingLevel(key),
+        autoCompaction: this.getAutoCompaction(key),
         text: userText,
         images,
         timeoutMs: this.hardTimeoutMs() || 2_147_483_647,
@@ -689,6 +770,16 @@ function extractLastAssistantOutcomeFromMessages(messages: readonly any[]): { te
     return { text: extractTextContent(msg.content), error };
   }
   return { text: "" };
+}
+
+function formatCompactionResult(result: { summary?: string; shortSummary?: string; tokensBefore?: number } | undefined) {
+  const summary = result?.shortSummary || result?.summary;
+  const lines = ["上下文已压缩。"];
+  if (summary?.trim()) lines.push(`摘要：${summary.trim()}`);
+  if (typeof result?.tokensBefore === "number" && Number.isFinite(result.tokensBefore)) {
+    lines.push(`压缩前 token：${result.tokensBefore}`);
+  }
+  return lines.join("\n");
 }
 
 export function formatUserFacingError(error: unknown) {

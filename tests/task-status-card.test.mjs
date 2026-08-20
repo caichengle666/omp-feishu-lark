@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildTaskStatusCard, describePiEvent, parseStopTaskActionValue, TaskStatusCard } from "../extension/task-status-card.ts";
+import { buildTaskStatusCard, describePiEvent, describeSubagentLifecycle, describeSubagentProgress, parseStopTaskActionValue, TaskStatusCard } from "../extension/task-status-card.ts";
 import { isAuthorizedCardAction, parseModelActionValue, parseResumeSelectActionValue } from "../extension/cards.ts";
 
 test("task status card shows truthful runtime and tool usage", () => {
@@ -31,6 +31,27 @@ test("task status card shows a queued phase before OMP begins execution", async 
   await card.start();
   await card.setPhase("正在排队等待上一项任务完成");
   assert.match(JSON.stringify(updates.at(-1)), /正在排队等待上一项任务完成/);
+});
+
+test("task status card shows subagent count while running", () => {
+  const card = buildTaskStatusCard({
+    key: "group:test",
+    runId: "run-1",
+    status: "running",
+    phase: "子代理 review 正在运行",
+    subagentCount: 2,
+  });
+  const text = JSON.stringify(card);
+  assert.match(text, /子代理任务：2 个/);
+});
+
+test("subagent lifecycle and progress are translated into readable Chinese", () => {
+  assert.equal(describeSubagentLifecycle({ agent: "review", status: "started" }), "子代理 review 已启动");
+  assert.equal(describeSubagentLifecycle({ agent: "review", status: "completed" }), "子代理 review 已完成");
+  assert.equal(
+    describeSubagentProgress({ agent: "review", progress: { status: "running", currentTool: "read" } }),
+    "子代理 review：运行中 · 工具 read",
+  );
 });
 
 test("card actions are bound to the originating Feishu user and chat", () => {

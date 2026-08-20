@@ -4,8 +4,12 @@ export type BotCommand =
   | { name: "new" }
   | { name: "resume" }
   | { name: "model" }
+  | { name: "effort"; level?: string }
+  | { name: "compact"; instructions?: string }
+  | { name: "autocompact"; enabled?: string }
   | { name: "stop" }
   | { name: "help" }
+  | { name: "commands" }
   | { name: "doctor" }
   | { name: "version" }
   | { name: "upgrade"; version?: string }
@@ -105,8 +109,15 @@ export function parseBotCommand(text: string): BotCommand | undefined {
   if (lower === "/new") return { name: "new" };
   if (lower === "/resume") return { name: "resume" };
   if (lower === "/model") return { name: "model" };
+  const effortMatch = trimmed.match(/^\/effort(?:\s+(.+))?$/i);
+  if (effortMatch) return { name: "effort", level: effortMatch[1]?.trim() };
+  const compactMatch = trimmed.match(/^\/compact(?:\s+(.+))?$/is);
+  if (compactMatch) return { name: "compact", instructions: compactMatch[1]?.trim() };
+  const autoCompactMatch = trimmed.match(/^\/autocompact(?:\s+(on|off))?$/i);
+  if (autoCompactMatch) return { name: "autocompact", enabled: autoCompactMatch[1]?.toLowerCase() };
   if (lower === "/stop") return { name: "stop" };
   if (lower === "/feishu help" || lower === "/help") return { name: "help" };
+  if (lower === "/feishu commands" || lower === "/commands") return { name: "commands" };
   if (lower === "/feishu doctor" || lower === "/doctor") return { name: "doctor" };
   if (lower === "/feishu version" || lower === "/version") return { name: "version" };
   if (lower === "/feishu setup") return { name: "setup" };

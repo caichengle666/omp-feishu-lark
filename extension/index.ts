@@ -342,7 +342,7 @@ export default function feishuExtension(pi: ExtensionAPI) {
       });
       const models = await conversations.getAvailableModels();
       const currentModel = await conversations.getSelectedModel(selected.key);
-      return buildModelCard(selected.key, models, currentModel, selected.ownerOpenId, selected.chatId);
+      return buildModelCard(selected.key, models, currentModel, selected.ownerOpenId, selected.chatId, conversations.getSelectedThinkingLevel(selected.key));
     });
     try {
       await transport.start();
@@ -542,6 +542,10 @@ export default function feishuExtension(pi: ExtensionAPI) {
     const autostartText = autostart
       ? `${autostart.state === "healthy" ? "OK" : autostart.state === "missing" || autostart.state === "disabled" ? "WARN" : "FAIL"} ${autostart.label}: ${autostart.detail || autostart.state}`
       : "WARN autostart: unavailable";
+    const home = process.env.HOME;
+    const userProfile = process.env.USERPROFILE;
+    const homeOk = process.platform === "win32" ? Boolean(userProfile) : Boolean(home);
+    const homeText = `HOME=${home || "missing"} USERPROFILE=${userProfile || "missing"}`;
     if (!detailed) {
       return [
         "Feishu doctor",
@@ -549,6 +553,7 @@ export default function feishuExtension(pi: ExtensionAPI) {
         `${cfg ? "OK" : "FAIL"} config`,
         `${owner?.status === "connected" ? "OK" : "WARN"} gateway`,
         `${supervisorRunning ? "OK" : "WARN"} supervisor`,
+        `${homeOk ? "OK" : "FAIL"} home`,
         `${models.length ? "OK" : "FAIL"} models: ${models.length} available`,
         autostartText,
       ].join("\n");
@@ -558,6 +563,7 @@ export default function feishuExtension(pi: ExtensionAPI) {
       `${existsSync(ompCliPath) ? "OK" : "FAIL"} omp cli: ${ompCliPath}`,
       `${owner?.status === "connected" ? "OK" : "WARN"} gateway: ${owner ? formatOwner(owner) : "not running"}`,
       `${supervisorRunning ? "OK" : "WARN"} supervisor: ${supervisor ? `pid=${supervisor.pid}` : "not running"}`,
+      `${homeOk ? "OK" : "FAIL"} home: ${homeText}`,
       `${models.length ? "OK" : "FAIL"} models: ${models.length ? `${models.length} available` : "none available; check models.yml/auth"}`,
       `${cfg?.notificationWebhookEnabled ? (notificationWebhook ? "OK" : "WARN") : "OK"} notification webhook: ${cfg?.notificationWebhookEnabled ? (notificationWebhook?.getEndpointLabel() || "enabled but not running") : "disabled"}`,
       `${existsSync(process.cwd()) ? "OK" : "FAIL"} workspace: ${process.cwd()}`,

@@ -245,6 +245,8 @@ test("provides doctor/version diagnostics and injects the release version into d
   assert.match(source, /async function doctorReport/);
   assert.match(source, /function versionReport/);
   assert.match(source, /formatStartError/);
+  assert.match(source, /homeOk = process\.platform === "win32" \? Boolean\(userProfile\) : Boolean\(home\)/);
+  assert.match(source, /homeText = `HOME=\$\{home \|\| "missing"\} USERPROFILE=\$\{userProfile \|\| "missing"\}`/);
   assert.match(installerSource, /pluginVersion: packageManifest\.version/);
 });
 

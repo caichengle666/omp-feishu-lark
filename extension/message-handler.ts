@@ -5,11 +5,11 @@ import { claimFeishuMessage, markFeishuMessage } from "./dedupe-store.js";
 import { debugLog } from "./debug.js";
 import { conversationKey, conversationLabel, normalizeForDedupe, parseBotCommand, parseMessageInput, pruneRecentMap } from "./messages.js";
 import { TaskStatusCard } from "./task-status-card.js";
-import { feishuHelpText } from "./help.js";
+import { feishuHelpText, formatOmpCommands } from "./help.js";
 import { transcribeTencentAudio } from "./tencent-asr.js";
 import type { FeishuBridgeStore } from "./bridge-store.js";
 import type { FeishuTransport } from "./transport.js";
-import type { FeishuMessage } from "./types.js";
+import { FEISHU_THINKING_LEVELS, type FeishuMessage, type FeishuThinkingLevel } from "./types.js";
 
 const CONTENT_DEDUPE_TTL_MS = 5_000;
 
@@ -170,8 +170,51 @@ export class FeishuMessageHandler {
         return true;
       }
       const currentModel = await this.conversations.getSelectedModel(key);
-      await transport.replyCard(msg.messageId, buildModelCard(key, models, currentModel, msg.senderOpenId, msg.chatId));
+      await transport.replyCard(msg.messageId, buildModelCard(key, models, currentModel, msg.senderOpenId, msg.chatId, this.conversations.getSelectedThinkingLevel(key)));
       debugLog("feishu.command.model.replied", { messageId: msg.messageId, key });
+      return true;
+    }
+
+    if (command.name === "effort") {
+      if (command.level && await this.requireGroupAdmin(msg, transport, "切换思考强度")) return true;
+      if (!command.level) {
+        const current = this.conversations.getSelectedThinkingLevel(key);
+        await transport.replyText(msg.messageId, current ? `当前思考强度：${current}` : "当前未单独设置，跟随 OMP 默认。");
+        return true;
+      }
+      const level = command.level.toLowerCase() as FeishuThinkingLevel;
+      if (!FEISHU_THINKING_LEVELS.includes(level)) {
+        await transport.replyText(msg.messageId, `不支持的思考强度：${command.level}\n可用：${FEISHU_THINKING_LEVELS.join(" / ")}`);
+        return true;
+      }
+      await this.conversations.selectThinkingLevel(key, level, async (reply) => {
+        await transport.replyText(msg.messageId, reply);
+      });
+      return true;
+    }
+
+    if (command.name === "compact") {
+      if (await this.requireGroupAdmin(msg, transport, "压缩上下文")) return true;
+      await this.conversations.compactConversation(key, command.instructions, async (reply) => {
+        await transport.replyText(msg.messageId, reply);
+      });
+      return true;
+    }
+
+    if (command.name === "autocompact") {
+      if (command.enabled && await this.requireGroupAdmin(msg, transport, "切换自动压缩")) return true;
+      if (!command.enabled) {
+        const current = this.conversations.getAutoCompaction(key);
+        await transport.replyText(
+          msg.messageId,
+          current === undefined ? "当前自动上下文压缩未单独设置，跟随 OMP 默认。" : `当前自动上下文压缩：${current ? "开启" : "关闭"}`,
+        );
+        return true;
+      }
+      const enabled = command.enabled === "on";
+      await this.conversations.setAutoCompaction(key, enabled, async (reply) => {
+        await transport.replyText(msg.messageId, reply);
+      });
       return true;
     }
 
@@ -191,7 +234,23 @@ export class FeishuMessageHandler {
     }
 
     if (command.name === "help") {
-      await transport.replyText(msg.messageId, feishuHelpText());
+      let ompCommands: any[] = [];
+      try {
+        ompCommands = await this.conversations.listOmpCommands(key);
+      } catch (error) {
+        debugLog("feishu.help.commands_error", { messageId: msg.messageId, error: error instanceof Error ? error.message : String(error) });
+      }
+      await transport.replyText(msg.messageId, feishuHelpText(ompCommands));
+      return true;
+    }
+
+    if (command.name === "commands") {
+      try {
+        const commands = await this.conversations.listOmpCommands(key);
+        await transport.replyText(msg.messageId, commands.length ? formatOmpCommands(commands) : "当前 OMP 会话暂无可用命令列表。");
+      } catch (error) {
+        await transport.replyText(msg.messageId, `无法获取 OMP 命令列表：${error instanceof Error ? error.message : String(error)}`);
+      }
       return true;
     }
 

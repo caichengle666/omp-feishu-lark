@@ -35,13 +35,29 @@ export type FeishuConfig = {
 export type ModelSelection = {
   provider: string;
   id: string;
+  thinkingLevel?: FeishuThinkingLevel;
 };
+
+export type FeishuThinkingLevel = "inherit" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+
+export const FEISHU_THINKING_LEVELS: readonly FeishuThinkingLevel[] = [
+  "inherit",
+  "off",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+];
 
 export type FeishuState = {
   sessions: Record<string, string>;
   /** Session files created or explicitly selected by each Feishu conversation. */
   history?: Record<string, string[]>;
   models?: Record<string, ModelSelection>;
+  thinkingLevels?: Record<string, FeishuThinkingLevel>;
+  autoCompaction?: Record<string, boolean>;
   workspaces?: Record<string, string>;
 };
 

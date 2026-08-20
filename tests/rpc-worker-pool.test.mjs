@@ -24,6 +24,11 @@ function fakeClient(name, gate) {
     getMessages: async () => [{ role: "assistant", content: [{ type: "text", text: `reply:${name}` }] }],
     getState: async () => ({ sessionId: `session:${name}`, sessionFile: `/sessions/${name}.json` }),
     onSessionEvent: () => () => {},
+    setAutoCompaction: async (enabled) => { calls.push(["auto", enabled]); },
+    compact: async (instructions) => {
+      calls.push(["compact", instructions]);
+      return { summary: "compacted", tokensBefore: 1200 };
+    },
   };
 }
 
@@ -65,6 +70,149 @@ test("abort only targets the requested conversation", async () => {
   assert.equal(clients.get("b").aborted, 0);
   gates.b.resolve();
   await Promise.all([a, b]);
+});
+
+test("applies the selected thinking level before submitting a prompt", async () => {
+  const client = fakeClient("thoughtful");
+  client.setThinkingLevel = async (level) => { client.calls.push(["thinking", level]); return { level }; };
+  const pool = new FeishuRpcWorkerPool(() => client);
+  const result = await pool.prompt("chat-a", {
+    cwd: "a",
+    text: "think",
+    images: [],
+    timeoutMs: 1000,
+    thinkingLevel: "high",
+  });
+  assert.equal(result.text, "reply:thoughtful");
+  assert.deepEqual(client.calls.slice(0, 3), [["start"], ["thinking", "high"], ["prompt", "think"]]);
+});
+
+test("applies the stored auto-compaction setting before submitting a prompt", async () => {
+  const client = fakeClient("compactable");
+  const pool = new FeishuRpcWorkerPool(() => client);
+  const result = await pool.prompt("chat-a", {
+    cwd: "a",
+    text: "continue",
+    images: [],
+    timeoutMs: 1000,
+    autoCompaction: true,
+  });
+  assert.equal(result.text, "reply:compactable");
+  assert.deepEqual(client.calls.slice(0, 3), [["start"], ["auto", true], ["prompt", "continue"]]);
+});
+
+test("compacts the active worker and forwards focus instructions", async () => {
+  const client = fakeClient("compactable");
+  const pool = new FeishuRpcWorkerPool(() => client);
+  const result = await pool.compact("chat-a", {
+    cwd: "a",
+    sessionFile: "/sessions/a.json",
+    instructions: "keep API details",
+    autoCompaction: true,
+  });
+  assert.equal(result.summary, "compacted");
+  assert.deepEqual(client.calls.slice(0, 4), [
+    ["start"],
+    ["session", "/sessions/a.json"],
+    ["auto", true],
+    ["compact", "keep API details"],
+  ]);
+});
+
+test("subscribes to subagent progress and forwards lifecycle frames to the status card", async () => {
+  const gate = deferred();
+  const lifecycle = [];
+  const progress = [];
+  const client = fakeClient("sub", gate);
+  client.setSubagentSubscription = async (level) => { client.calls.push(["subs", level]); };
+  client.onSubagentLifecycle = (listener) => {
+    client.lifecycleListener = listener;
+    return () => { client.lifecycleListener = undefined; };
+  };
+  client.onSubagentProgress = (listener) => {
+    client.progressListener = listener;
+    return () => { client.progressListener = undefined; };
+  };
+  const status = {
+    updateFromSubagentLifecycle: (payload) => lifecycle.push(payload),
+    updateFromSubagentProgress: (payload) => progress.push(payload),
+  };
+  const pool = new FeishuRpcWorkerPool(() => client);
+  const prompt = pool.prompt("chat-a", {
+    cwd: "a",
+    text: "spawn tasks",
+    images: [],
+    timeoutMs: 1000,
+    status,
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.deepEqual(client.calls.slice(0, 2), [["start"], ["subs", "progress"]]);
+  assert.equal(typeof client.lifecycleListener, "function");
+  assert.equal(typeof client.progressListener, "function");
+  client.lifecycleListener({ agent: "review", status: "started" });
+  client.progressListener({
+    index: 0,
+    agent: "review",
+    progress: { id: "sub-1", status: "running", currentTool: "read" },
+  });
+  gate.resolve();
+  await prompt;
+
+  assert.deepEqual(lifecycle.map((item) => item.agent), ["review"]);
+  assert.deepEqual(progress.map((item) => item.progress.currentTool), ["read"]);
+  assert.equal(client.lifecycleListener, undefined);
+  assert.equal(client.progressListener, undefined);
+});
+
+test("rejects auto-compaction when OMP does not expose setAutoCompaction", async () => {
+  const client = fakeClient("legacy");
+  delete client.setAutoCompaction;
+  const pool = new FeishuRpcWorkerPool(() => client);
+  await assert.rejects(
+    pool.prompt("chat-a", { cwd: "a", text: "think", images: [], timeoutMs: 1000, autoCompaction: false }),
+    /当前 OMP 不支持自动压缩开关/,
+  );
+});
+
+test("rejects manual compaction when OMP does not expose compact", async () => {
+  const client = fakeClient("legacy");
+  delete client.compact;
+  const pool = new FeishuRpcWorkerPool(() => client);
+  await assert.rejects(
+    pool.compact("chat-a", { cwd: "a" }),
+    /当前 OMP 不支持手动压缩/,
+  );
+});
+
+test("discovers available OMP slash commands through the active worker", async () => {
+  const client = fakeClient("commands");
+  client.getAvailableCommands = async () => [
+    { name: "compact", description: "Manually compact the session context", source: "builtin" },
+    { name: "review", description: "Review current diff", source: "builtin" },
+  ];
+  const pool = new FeishuRpcWorkerPool(() => client);
+  const commands = await pool.availableCommands("chat-a", { cwd: "a" });
+  assert.deepEqual(commands.map((command) => command.name), ["compact", "review"]);
+  assert.deepEqual(client.calls, [["start"]]);
+});
+
+test("rejects command discovery when OMP does not expose getAvailableCommands", async () => {
+  const client = fakeClient("legacy");
+  const pool = new FeishuRpcWorkerPool(() => client);
+  await assert.rejects(
+    pool.availableCommands("chat-a", { cwd: "a" }),
+    /当前 OMP 不支持命令发现/,
+  );
+});
+
+test("rejects thinking level switching when OMP does not expose setThinkingLevel", async () => {
+  const client = fakeClient("legacy");
+  const pool = new FeishuRpcWorkerPool(() => client);
+  await assert.rejects(
+    pool.prompt("chat-a", { cwd: "a", text: "think", images: [], timeoutMs: 1000, thinkingLevel: "max" }),
+    /当前 OMP 不支持思考强度切换/,
+  );
 });
 
 test("abort during worker startup prevents the prompt from being submitted", async () => {

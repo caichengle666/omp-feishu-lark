@@ -16,6 +16,175 @@ test("bot parser recognizes /feishu setup as a plugin command", () => {
   assert.deepEqual(parseBotCommand("/feishu reset"), { name: "reset" });
 });
 
+test("bot parser recognizes /effort with or without a level", () => {
+  assert.deepEqual(parseBotCommand("/effort"), { name: "effort", level: undefined });
+  assert.deepEqual(parseBotCommand("/effort high"), { name: "effort", level: "high" });
+  assert.deepEqual(parseBotCommand("/EFFORT max"), { name: "effort", level: "max" });
+});
+
+test("bot parser recognizes compact and autocompact commands", () => {
+  assert.deepEqual(parseBotCommand("/compact"), { name: "compact", instructions: undefined });
+  assert.deepEqual(parseBotCommand("/compact keep model details"), { name: "compact", instructions: "keep model details" });
+  assert.deepEqual(parseBotCommand("/autocompact"), { name: "autocompact", enabled: undefined });
+  assert.deepEqual(parseBotCommand("/autocompact on"), { name: "autocompact", enabled: "on" });
+  assert.deepEqual(parseBotCommand("/autocompact off"), { name: "autocompact", enabled: "off" });
+  assert.equal(parseBotCommand("/autocompact maybe"), undefined);
+  assert.deepEqual(parseBotCommand("/commands"), { name: "commands" });
+  assert.deepEqual(parseBotCommand("/feishu commands"), { name: "commands" });
+});
+
+test("effort without a level reports the current thinking level", async () => {
+  const replies = [];
+  const transport = { replyText: async (_messageId, text) => { replies.push(text); } };
+  const handler = new FeishuMessageHandler({
+    getSelectedThinkingLevel: () => "high",
+  }, () => transport, undefined, { isAdmin: () => false });
+  const message = {
+    messageId: "om_effort",
+    chatId: "oc_chat",
+    chatType: "p2p",
+    senderOpenId: "ou_user",
+    msgType: "text",
+    content: "",
+  };
+
+  assert.equal(await handler.handleCommand(message, "p2p:ou_user", "/effort"), true);
+  assert.deepEqual(replies, ["当前思考强度：high"]);
+});
+
+test("effort rejects unsupported levels with the available list", async () => {
+  const replies = [];
+  const transport = { replyText: async (_messageId, text) => { replies.push(text); } };
+  const handler = new FeishuMessageHandler({}, () => transport, undefined, { isAdmin: () => false });
+  const message = {
+    messageId: "om_effort_invalid",
+    chatId: "oc_chat",
+    chatType: "p2p",
+    senderOpenId: "ou_user",
+    msgType: "text",
+    content: "",
+  };
+
+  assert.equal(await handler.handleCommand(message, "p2p:ou_user", "/effort turbo"), true);
+  assert.match(replies[0], /不支持的思考强度：turbo/);
+  assert.match(replies[0], /inherit \/ off \/ minimal/);
+});
+
+test("effort switches the conversation thinking level", async () => {
+  const replies = [];
+  const selected = [];
+  const transport = { replyText: async (_messageId, text) => { replies.push(text); } };
+  const handler = new FeishuMessageHandler({
+    selectThinkingLevel: async (_key, level, onReply) => {
+      selected.push(level);
+      await onReply(`已切换思考强度为 ${level}，后续任务生效。`);
+    },
+  }, () => transport, undefined, { isAdmin: () => false });
+  const message = {
+    messageId: "om_effort_switch",
+    chatId: "oc_chat",
+    chatType: "p2p",
+    senderOpenId: "ou_user",
+    msgType: "text",
+    content: "",
+  };
+
+  assert.equal(await handler.handleCommand(message, "p2p:ou_user", "/effort off"), true);
+  assert.deepEqual(selected, ["off"]);
+  assert.deepEqual(replies, ["已切换思考强度为 off，后续任务生效。"]);
+});
+
+test("autocompact without a value reports the current setting", async () => {
+  const replies = [];
+  const transport = { replyText: async (_messageId, text) => { replies.push(text); } };
+  const handler = new FeishuMessageHandler({
+    getAutoCompaction: () => true,
+  }, () => transport, undefined, { isAdmin: () => false });
+  const message = {
+    messageId: "om_autocompact",
+    chatId: "oc_chat",
+    chatType: "p2p",
+    senderOpenId: "ou_user",
+    msgType: "text",
+    content: "",
+  };
+
+  assert.equal(await handler.handleCommand(message, "p2p:ou_user", "/autocompact"), true);
+  assert.deepEqual(replies, ["当前自动上下文压缩：开启"]);
+});
+
+test("autocompact on switches the conversation setting", async () => {
+  const replies = [];
+  const selected = [];
+  const transport = { replyText: async (_messageId, text) => { replies.push(text); } };
+  const handler = new FeishuMessageHandler({
+    setAutoCompaction: async (_key, enabled, onReply) => {
+      selected.push(enabled);
+      await onReply(`已${enabled ? "开启" : "关闭"}自动上下文压缩，后续任务生效。`);
+    },
+  }, () => transport, undefined, { isAdmin: () => false });
+  const message = {
+    messageId: "om_autocompact_on",
+    chatId: "oc_chat",
+    chatType: "p2p",
+    senderOpenId: "ou_user",
+    msgType: "text",
+    content: "",
+  };
+
+  assert.equal(await handler.handleCommand(message, "p2p:ou_user", "/autocompact on"), true);
+  assert.deepEqual(selected, [true]);
+  assert.deepEqual(replies, ["已开启自动上下文压缩，后续任务生效。"]);
+});
+
+test("compact passes focus instructions to the conversation manager", async () => {
+  const replies = [];
+  const calls = [];
+  const transport = { replyText: async (_messageId, text) => { replies.push(text); } };
+  const handler = new FeishuMessageHandler({
+    compactConversation: async (_key, instructions, onReply) => {
+      calls.push(instructions);
+      await onReply("上下文已压缩。");
+    },
+  }, () => transport, undefined, { isAdmin: () => false });
+  const message = {
+    messageId: "om_compact",
+    chatId: "oc_chat",
+    chatType: "p2p",
+    senderOpenId: "ou_user",
+    msgType: "text",
+    content: "",
+  };
+
+  assert.equal(await handler.handleCommand(message, "p2p:ou_user", "/compact keep API details"), true);
+  assert.deepEqual(calls, ["keep API details"]);
+  assert.deepEqual(replies, ["上下文已压缩。"]);
+});
+
+test("commands fetches available OMP slash commands", async () => {
+  const replies = [];
+  const transport = { replyText: async (_messageId, text) => { replies.push(text); } };
+  const handler = new FeishuMessageHandler({
+    listOmpCommands: async () => [
+      { name: "compact", description: "Manually compact the session context", source: "builtin" },
+      { name: "review", description: "Review current diff", source: "builtin" },
+    ],
+  }, () => transport, undefined, { isAdmin: () => false });
+  const message = {
+    messageId: "om_commands",
+    chatId: "oc_chat",
+    chatType: "p2p",
+    senderOpenId: "ou_user",
+    msgType: "text",
+    content: "",
+  };
+
+  assert.equal(await handler.handleCommand(message, "p2p:ou_user", "/commands"), true);
+  assert.match(replies[0], /当前 OMP 会话可用命令/);
+  assert.match(replies[0], /\/compact/);
+  assert.match(replies[0], /\/review/);
+});
+
 test("Feishu setup replies with OMP guidance instead of sending the text to the model", async () => {
   const replies = [];
   const transport = {
