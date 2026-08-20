@@ -1,3 +1,5 @@
+import { feishuHelpText, formatOmpCommands, type OmpCommandInfo } from "./help.js";
+
 export function modelLabel(model: any) {
   if (!model) return "未选择";
   return `${model.provider}/${model.id}`;
@@ -22,6 +24,196 @@ export type ResumeSessionPage = {
   totalPages: number;
   items: ResumeSessionItem[];
 };
+
+export type HelpCardOptions = {
+  key: string;
+  ownerOpenId: string;
+  chatId: string;
+  chatType: "p2p" | "group";
+  ompCommands?: ReadonlyArray<OmpCommandInfo>;
+  draft?: string;
+};
+
+export type HelpActionRun = {
+  action: "pi_feishu_help_run";
+  key: string;
+  chatType: "p2p" | "group";
+  command: string;
+  ownerOpenId: string;
+  chatId: string;
+};
+
+export type HelpActionFill = {
+  action: "pi_feishu_help_fill";
+  key: string;
+  chatType: "p2p" | "group";
+  draft: string;
+  ownerOpenId: string;
+  chatId: string;
+};
+
+export type HelpActionSubmit = {
+  action: "pi_feishu_help_submit";
+  key: string;
+  chatType: "p2p" | "group";
+  inputName: string;
+  ownerOpenId: string;
+  chatId: string;
+};
+
+const HELP_RUN_BUTTONS: Array<{ label: string; command: string; type?: string }> = [
+  { label: "新建会话", command: "new" },
+  { label: "恢复历史", command: "resume" },
+  { label: "选择模型", command: "model" },
+  { label: "停止任务", command: "stop" },
+  { label: "OMP 命令", command: "commands" },
+  { label: "高思考强度", command: "effort high", type: "primary" },
+  { label: "低思考强度", command: "effort low" },
+  { label: "自动压缩开", command: "autocompact on" },
+  { label: "自动压缩关", command: "autocompact off" },
+  { label: "压缩上下文", command: "compact" },
+];
+
+const HELP_FILL_BUTTONS: Array<{ label: string; draft: string }> = [
+  { label: "填入 /effort", draft: "/effort " },
+  { label: "填入 /compact", draft: "/compact " },
+  { label: "填入 /workspace", draft: "/workspace " },
+  { label: "填入 /send", draft: "/send " },
+  { label: "填入 /feishu upgrade", draft: "/feishu upgrade " },
+];
+
+export function buildHelpCard(options: HelpCardOptions) {
+  const elements: any[] = [
+    {
+      tag: "markdown",
+      content: `${feishuHelpText()}\n\n点击按钮即可执行常用操作；带参数的命令先填到下面输入框，补完参数后点 **执行**。`,
+    },
+    ...buttonRow(HELP_RUN_BUTTONS.map((entry) => ({
+      label: entry.label,
+      type: entry.type,
+      value: {
+        action: "pi_feishu_help_run",
+        key: options.key,
+        chatType: options.chatType,
+        command: entry.command,
+        ownerOpenId: options.ownerOpenId,
+        chatId: options.chatId,
+      } satisfies HelpActionRun,
+    }))),
+    { tag: "hr" },
+    {
+      tag: "markdown",
+      content: "需要自己补参数的命令：",
+    },
+    ...buttonRow(HELP_FILL_BUTTONS.map((entry) => ({
+      label: entry.label,
+      value: {
+        action: "pi_feishu_help_fill",
+        key: options.key,
+        chatType: options.chatType,
+        draft: entry.draft,
+        ownerOpenId: options.ownerOpenId,
+        chatId: options.chatId,
+      } satisfies HelpActionFill,
+    }))),
+    {
+      tag: "form",
+      element_id: "help_command_form",
+      name: "help_command_form",
+      direction: "vertical",
+      elements: [
+        {
+          tag: "input",
+          element_id: "help_command_input",
+          name: "help_command_input",
+          label: { tag: "plain_text", content: "命令" },
+          placeholder: { tag: "plain_text", content: "先点上方按钮填入前缀，或直接输入完整命令" },
+          default_value: options.draft || "",
+          width: "fill",
+          required: true,
+          input_type: "text",
+        },
+        {
+          tag: "column_set",
+          flex_mode: "flow",
+          horizontal_spacing: "8px",
+          columns: [
+            {
+              tag: "column",
+              width: "auto",
+              elements: [{
+                tag: "button",
+                name: "help_submit_button",
+                form_action_type: "submit",
+                type: "primary_filled",
+                text: { tag: "plain_text", content: "执行" },
+                behaviors: [{
+                  type: "callback",
+                  value: {
+                    action: "pi_feishu_help_submit",
+                    key: options.key,
+                    chatType: options.chatType,
+                    inputName: "help_command_input",
+                    ownerOpenId: options.ownerOpenId,
+                    chatId: options.chatId,
+                  } satisfies HelpActionSubmit,
+                }],
+              }],
+            },
+            {
+              tag: "column",
+              width: "auto",
+              elements: [{
+                tag: "button",
+                name: "help_reset_button",
+                form_action_type: "reset",
+                type: "default",
+                text: { tag: "plain_text", content: "重置" },
+              }],
+            },
+          ],
+        },
+      ],
+    },
+  ];
+
+  const ompText = options.ompCommands?.length ? formatOmpCommands(options.ompCommands) : "当前 OMP 会话暂无可用命令列表。";
+  elements.push({ tag: "markdown", content: ompText });
+
+  return {
+    schema: "2.0",
+    config: { update_multi: true, width_mode: "fill" },
+    header: {
+      template: "blue",
+      title: { tag: "plain_text", content: "OMP 飞书帮助" },
+    },
+    body: { elements },
+  };
+}
+
+function buttonRow(buttons: Array<{ label: string; type?: string; value: Record<string, unknown> }>): any[] {
+  const rows: any[][] = [];
+  for (let index = 0; index < buttons.length; index += 3) {
+    rows.push(buttons.slice(index, index + 3));
+  }
+  return rows.map((row) => ({
+    tag: "column_set",
+    flex_mode: "flow",
+    horizontal_spacing: "8px",
+    columns: row.map((button) => ({
+      tag: "column",
+      width: "auto",
+      weight: 1,
+      vertical_align: "top",
+      elements: [{
+        tag: "button",
+        text: { tag: "plain_text", content: button.label },
+        type: button.type || "default",
+        behaviors: [{ type: "callback", value: button.value }],
+      }],
+    })),
+  }));
+}
 
 export function buildModelCard(key: string, models: any[], currentModel: any, ownerOpenId?: string, chatId?: string, currentThinkingLevel?: string) {
   const current = modelLabel(currentModel);
@@ -111,11 +303,11 @@ export function buildResumeCard(data: ResumeSessionPage, ownerOpenId?: string, c
         value: {
           action: "pi_feishu_resume_select",
           key: data.key,
-            scope: data.scope,
-            page: data.page,
-            sessionPath: item.path,
-            ownerOpenId,
-            chatId,
+          scope: data.scope,
+          page: data.page,
+          sessionPath: item.path,
+          ownerOpenId,
+          chatId,
         },
       }],
     });
@@ -163,6 +355,55 @@ export function buildResumeCard(data: ResumeSessionPage, ownerOpenId?: string, c
     },
     elements,
   };
+}
+
+export function parseHelpActionValue(value: unknown): HelpActionRun | HelpActionFill | HelpActionSubmit | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const raw = value as any;
+  if (raw.action === "pi_feishu_help_run") {
+    if (typeof raw.key !== "string" || typeof raw.command !== "string") return undefined;
+    const chatType = normalizeChatType(raw.chatType);
+    if (!chatType) return undefined;
+    return {
+      action: "pi_feishu_help_run",
+      key: raw.key,
+      chatType,
+      command: raw.command,
+      ownerOpenId: typeof raw.ownerOpenId === "string" ? raw.ownerOpenId : "",
+      chatId: typeof raw.chatId === "string" ? raw.chatId : "",
+    };
+  }
+  if (raw.action === "pi_feishu_help_fill") {
+    if (typeof raw.key !== "string" || typeof raw.draft !== "string") return undefined;
+    const chatType = normalizeChatType(raw.chatType);
+    if (!chatType) return undefined;
+    return {
+      action: "pi_feishu_help_fill",
+      key: raw.key,
+      chatType,
+      draft: raw.draft,
+      ownerOpenId: typeof raw.ownerOpenId === "string" ? raw.ownerOpenId : "",
+      chatId: typeof raw.chatId === "string" ? raw.chatId : "",
+    };
+  }
+  if (raw.action === "pi_feishu_help_submit") {
+    if (typeof raw.key !== "string" || typeof raw.inputName !== "string") return undefined;
+    const chatType = normalizeChatType(raw.chatType);
+    if (!chatType) return undefined;
+    return {
+      action: "pi_feishu_help_submit",
+      key: raw.key,
+      chatType,
+      inputName: raw.inputName,
+      ownerOpenId: typeof raw.ownerOpenId === "string" ? raw.ownerOpenId : "",
+      chatId: typeof raw.chatId === "string" ? raw.chatId : "",
+    };
+  }
+  return undefined;
+}
+
+function normalizeChatType(value: unknown): "p2p" | "group" | undefined {
+  return value === "p2p" || value === "group" ? value : undefined;
 }
 
 export function parseModelActionValue(value: unknown): { key: string; provider: string; modelId: string; ownerOpenId?: string; chatId?: string } | undefined {

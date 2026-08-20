@@ -153,5 +153,6 @@ function normalizeCardAction(data: any): FeishuCardAction {
     operatorOpenId,
     token: typeof data?.token === "string" ? data.token : undefined,
     value: data?.action?.value,
+    formValue: data?.action?.form_value,
   };
 }

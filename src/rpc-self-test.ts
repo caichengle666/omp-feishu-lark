@@ -1,21 +1,35 @@
 import { spawn } from "node:child_process";
 
+type OmpApprovalMode = "always-ask" | "write" | "yolo";
+
+type RpcSelfTestOmpLaunch = {
+  enableSkills?: boolean;
+  skills?: string[];
+  tools?: string[];
+  approvalMode?: OmpApprovalMode;
+  maxTime?: string;
+  appendSystemPrompt?: string;
+  addDirs?: string[];
+};
+
 type RpcSelfTestOptions = {
   bunBin: string;
   ompCliPath: string;
   workspace: string;
   timeoutMs: number;
+  ompLaunch?: RpcSelfTestOmpLaunch;
 };
 
 export async function verifyRpcWorkerReady(options: RpcSelfTestOptions): Promise<void> {
-  const child = spawn(options.bunBin, [
+  const args = [
     options.ompCliPath,
     "--mode", "rpc",
     "--no-extensions",
-    "--no-skills",
     "--allow-home",
     "--cwd", options.workspace,
-  ], {
+    ...buildLaunchArgs(options.ompLaunch),
+  ];
+  const child = spawn(options.bunBin, args, {
     cwd: options.workspace,
     env: process.env,
     stdio: ["pipe", "pipe", "pipe"],
@@ -70,3 +84,14 @@ export async function verifyRpcWorkerReady(options: RpcSelfTestOptions): Promise
   }
 }
 
+function buildLaunchArgs(launch?: RpcSelfTestOmpLaunch) {
+  const args: string[] = [];
+  if (!launch?.enableSkills) args.push("--no-skills");
+  if (launch?.skills?.length) args.push("--skills", launch.skills.join(","));
+  if (launch?.tools?.length) args.push("--tools", launch.tools.join(","));
+  if (launch?.approvalMode) args.push("--approval-mode", launch.approvalMode);
+  if (launch?.maxTime) args.push("--max-time", launch.maxTime);
+  if (launch?.appendSystemPrompt) args.push("--append-system-prompt", launch.appendSystemPrompt);
+  for (const dir of launch?.addDirs || []) args.push("--add-dir", dir);
+  return args;
+}

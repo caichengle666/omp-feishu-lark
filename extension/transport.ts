@@ -224,6 +224,7 @@ export class FeishuTransport {
       chatId,
       hasToken: Boolean(data?.token),
       value: data?.action?.value,
+      formValue: data?.action?.form_value,
     });
     const result = await this.onCardAction({
       messageId,
@@ -231,6 +232,7 @@ export class FeishuTransport {
       operatorOpenId,
       token: typeof data?.token === "string" ? data.token : undefined,
       value: data?.action?.value,
+      formValue: data?.action?.form_value,
     });
     // The WSClient sends the return value back to the Feishu platform as
     // the card callback response. It must use the wrapped format:

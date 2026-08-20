@@ -11,7 +11,7 @@ import { cleanupLegacyInstallations } from "./legacy-cleanup.js";
 import { verifyRpcWorkerReady } from "./rpc-self-test.js";
 import { bunDnsArgs, resolveUpgradeNetworkPolicy, upgradeNetworkAttempts, upgradeTimeoutMs } from "../extension/upgrade.js";
 import { ensureAutoStart } from "./autostart.js";
-import { buildDaemonSpec } from "./daemon-spec.js";
+import { buildDaemonSpec, normalizeOmpLaunch } from "./daemon-spec.js";
 
 const isWindows = process.platform === "win32";
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -167,6 +167,8 @@ if (!config) {
   ok("Feishu credentials found");
 }
 
+const ompLaunch = normalizeOmpLaunch(config?.ompLaunch);
+
 if (restart) {
   if (!existsSync(workspace)) fail(`Workspace does not exist: ${workspace}`);
   mkdirSync(runtimeDir, { recursive: true });
@@ -262,6 +264,7 @@ if (installService) {
     workspace,
     agentDir,
     runtimeRoot: runtimeDir,
+    ompLaunch,
     pluginVersion: packageManifest.version,
   });
   const autostart = await ensureAutoStart(serviceSpec, true, {}, { start: false });
@@ -287,6 +290,7 @@ const launchSpec = buildDaemonSpec({
   workspace,
   agentDir,
   runtimeRoot: runtimeDir,
+    ompLaunch,
   pluginVersion: packageManifest.version,
 });
 const launchToken = `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -304,7 +308,7 @@ if (await waitForConnected(lockPath, launchToken, timeoutSeconds * 1000)) {
   ok("Feishu gateway connected");
   info("Checking that an OMP RPC worker can start...");
   try {
-    await verifyRpcWorkerReady({ bunBin, ompCliPath: rpcOmpCli, workspace, timeoutMs: timeoutSeconds * 1000 });
+    await verifyRpcWorkerReady({ bunBin, ompCliPath: rpcOmpCli, workspace, timeoutMs: timeoutSeconds * 1000, ompLaunch });
     ok("OMP RPC worker ready");
   } catch (error) {
     await stopExistingProcess(supervisorPidPath, supervisorStopPath);
@@ -533,6 +537,7 @@ async function restartRestoredDaemon() {
       workspace,
       agentDir,
       runtimeRoot: runtimeDir,
+    ompLaunch,
       pluginVersion: restoredManifest.version || undefined,
     });
     const launched = spawn(restoredSpec.supervisorCommand[0], restoredSpec.supervisorCommand.slice(1), {

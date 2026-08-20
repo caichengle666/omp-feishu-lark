@@ -1,6 +1,48 @@
 import { delimiter, dirname, join } from "node:path";
 import { homedir } from "node:os";
 
+export type OmpApprovalMode = "always-ask" | "write" | "yolo";
+
+export type OmpLaunchOptions = {
+  enableSkills?: boolean;
+  skills?: string[];
+  tools?: string[];
+  approvalMode?: OmpApprovalMode;
+  maxTime?: string;
+  appendSystemPrompt?: string;
+  addDirs?: string[];
+};
+
+export function normalizeOmpLaunch(value: unknown): OmpLaunchOptions | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const raw = value as Record<string, unknown>;
+  const enableSkills = typeof raw.enableSkills === "boolean" ? raw.enableSkills : undefined;
+  const skills = normalizeStringList(raw.skills);
+  const tools = normalizeStringList(raw.tools);
+  const addDirs = normalizeStringList(raw.addDirs);
+  const approvalMode = raw.approvalMode === "always-ask" || raw.approvalMode === "write" || raw.approvalMode === "yolo"
+    ? raw.approvalMode
+    : undefined;
+  const maxTime = normalizeDuration(raw.maxTime);
+  const appendSystemPrompt = typeof raw.appendSystemPrompt === "string" && raw.appendSystemPrompt.trim()
+    ? raw.appendSystemPrompt.trim()
+    : undefined;
+  if (enableSkills === undefined && skills === undefined && tools === undefined && addDirs === undefined && approvalMode === undefined && maxTime === undefined && appendSystemPrompt === undefined) return undefined;
+  return { enableSkills, skills, tools, approvalMode, maxTime, appendSystemPrompt, addDirs };
+}
+
+function normalizeStringList(value: unknown) {
+  if (!Array.isArray(value)) return undefined;
+  const items = value.filter((item): item is string => typeof item === "string").map((item) => item.trim()).filter(Boolean);
+  return items.length ? [...new Set(items)] : undefined;
+}
+
+function normalizeDuration(value: unknown) {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return /^\d+(?:\.\d+)?(?:[smh])?$/.test(trimmed) ? trimmed : undefined;
+}
+
 export type DaemonSpecInput = {
   bunBin: string;
   ompCliPath: string;
@@ -11,6 +53,7 @@ export type DaemonSpecInput = {
   pluginVersion?: string;
   path?: string;
   homeDir?: string;
+  ompLaunch?: OmpLaunchOptions;
 };
 
 export type DaemonSpec = {
@@ -39,11 +82,17 @@ export function buildDaemonSpec(input: DaemonSpecInput): DaemonSpec {
     input.ompCliPath,
     "--mode", "rpc",
     "--no-extensions",
-    "--no-skills",
-    "--allow-home",
-    "--cwd", input.workspace,
-    "-e", input.extensionPath,
   ];
+  const launch = input.ompLaunch;
+  if (!launch?.enableSkills) daemonArgs.push("--no-skills");
+  daemonArgs.push("--allow-home", "--cwd", input.workspace, "-e", input.extensionPath);
+  if (launch?.skills?.length) daemonArgs.push("--skills", launch.skills.join(","));
+  if (launch?.tools?.length) daemonArgs.push("--tools", launch.tools.join(","));
+  if (launch?.approvalMode) daemonArgs.push("--approval-mode", launch.approvalMode);
+  if (launch?.maxTime) daemonArgs.push("--max-time", launch.maxTime);
+  if (launch?.appendSystemPrompt) daemonArgs.push("--append-system-prompt", launch.appendSystemPrompt);
+  for (const dir of launch?.addDirs || []) daemonArgs.push("--add-dir", dir);
+
   const bunDir = dirname(input.bunBin);
   const homeDir = input.homeDir || homedir();
   const env: Record<string, string> = {

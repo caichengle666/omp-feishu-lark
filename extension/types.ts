@@ -2,6 +2,24 @@ export type Domain = "feishu" | "lark";
 export type GroupPolicy = "open" | "mention";
 export type CardActionMode = "webhook" | "ws";
 
+export type OmpApprovalMode = "always-ask" | "write" | "yolo";
+
+export type FeishuOmpLaunch = {
+  /** Load OMP skills instead of passing --no-skills to the daemon. */
+  enableSkills?: boolean;
+  /** Comma-friendly glob patterns passed to omp --skills. */
+  skills?: string[];
+  /** Explicit tool allowlist passed to omp --tools. */
+  tools?: string[];
+  /** Remote sessions cannot answer interactive approval prompts. */
+  approvalMode?: OmpApprovalMode;
+  /** Duration accepted by omp --max-time, e.g. "30m". */
+  maxTime?: string;
+  appendSystemPrompt?: string;
+  /** Additional workspace directories exposed via omp --add-dir. */
+  addDirs?: string[];
+};
+
 export type FeishuConfig = {
   appId: string;
   appSecret: string;
@@ -30,6 +48,7 @@ export type FeishuConfig = {
   promptTimeoutSec?: number;
   /** Explicit opt-in for the hard prompt timeout. Old configs without this flag remain unlimited. */
   promptTimeoutEnabled?: boolean;
+  ompLaunch?: FeishuOmpLaunch;
 };
 
 export type ModelSelection = {
@@ -110,6 +129,7 @@ export type FeishuCardAction = {
   operatorOpenId: string;
   token?: string;
   value: unknown;
+  formValue?: Record<string, unknown>;
 };
 
 export type FeishuStatus = "not configured" | "connecting" | "connected" | "owned" | "bot unavailable" | "disconnected";

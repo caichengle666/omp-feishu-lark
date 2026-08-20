@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { getAgentDir } from "@oh-my-pi/pi-coding-agent";
 import { RpcClient } from "@oh-my-pi/pi-coding-agent/modes/rpc/rpc-client";
-import { buildModelCard, buildResumeCard, isAuthorizedCardAction, parseModelActionValue, parseResumePageActionValue, parseResumeSelectActionValue } from "./cards.js";
+import { buildHelpCard, buildModelCard, buildResumeCard, isAuthorizedCardAction, parseHelpActionValue, parseModelActionValue, parseResumePageActionValue, parseResumeSelectActionValue } from "./cards.js";
 import { isSupervisorProcessAlive, readSupervisorRecord, recordedProcessStatus, writeStopRequest } from "../support/feishu-supervisor.mjs";
 import { AGENT_DIR, BRIDGE_PATH, CONFIG_PATH, DAEMON_LOG_PATH, DEBUG_LOG_PATH, DEDUPE_PATH, ensureRoot, isFeishuAdmin, loadConfig, mask, readJson, removePath, RESTART_NOTICE_PATH, ROOT_DIR, STATE_PATH, SUPERVISOR_PID_PATH, SUPERVISOR_STOP_PATH, UPGRADE_NOTICE_PATH, writeJson } from "./config.js";
 import { debugLog, flushDebugLog } from "./debug.js";
@@ -331,6 +331,46 @@ export default function feishuExtension(pi: ExtensionAPI) {
         const page = await conversations.listResumeSessions(resumeSelect.key, resumeSelect.scope, resumeSelect.page);
         return buildResumeCard(page, resumeSelect.ownerOpenId, resumeSelect.chatId);
       }
+      const helpAction = parseHelpActionValue(action.value);
+      if (helpAction) {
+        if (!isAuthorizedCardAction(helpAction, action)) {
+          debugLog("feishu.card.help_denied", { cardMessageId: action.messageId, operatorOpenId: action.operatorOpenId });
+          return;
+        }
+        const makeHelpMessage = (): any => ({
+          messageId: action.messageId,
+          chatId: helpAction.chatId || action.chatId || "",
+          chatType: helpAction.chatType,
+          senderOpenId: action.operatorOpenId,
+          msgType: "text",
+          content: "",
+        });
+        if (helpAction.action === "pi_feishu_help_run") {
+          await messageHandler.handleCardCommand(makeHelpMessage(), helpAction.key, `/${helpAction.command}`);
+          return;
+        }
+        if (helpAction.action === "pi_feishu_help_fill") {
+          const ompCommands = await conversations.listOmpCommands(helpAction.key).catch(() => []);
+          return buildHelpCard({
+            key: helpAction.key,
+            ownerOpenId: helpAction.ownerOpenId,
+            chatId: helpAction.chatId,
+            chatType: helpAction.chatType,
+            draft: helpAction.draft,
+            ompCommands,
+          });
+        }
+        if (helpAction.action === "pi_feishu_help_submit") {
+          const rawCommand = action.formValue?.[helpAction.inputName];
+          const command = typeof rawCommand === "string" ? rawCommand.trim() : "";
+          if (!command) {
+            await transport?.replyText(action.messageId, "请输入命令后再执行。");
+            return;
+          }
+          await messageHandler.handleCardCommand(makeHelpMessage(), helpAction.key, command);
+          return;
+        }
+      }
       const selected = parseModelActionValue(action.value);
       if (!selected) return;
       if (!isAuthorizedCardAction(selected, action)) {
@@ -582,6 +622,7 @@ export default function feishuExtension(pi: ExtensionAPI) {
       workspace: process.cwd(),
       agentDir: AGENT_DIR,
       runtimeRoot: ROOT_DIR,
+      ompLaunch: loadConfig()?.ompLaunch,
       pluginVersion: version && version !== "unknown" ? version : undefined,
     });
   }

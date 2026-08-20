@@ -1,7 +1,7 @@
 # Feishu/Lark OMP plugin — patched build
 
 A patched redistribution of [**AX1202/pi-feishu-lark**](https://github.com/AX1202/pi-feishu-lark)
-(v0.2.4, MIT) that runs against SDK `@oh-my-pi/pi-coding-agent@17.2.10`, plus a
+(v0.2.4, MIT) that supports SDK `@oh-my-pi/pi-coding-agent >=17.2.12 <18`, plus a
 self-contained installer.
 
 Upstream targets `@earendil-works/pi-coding-agent`; on the newer SDK the plugin
@@ -13,6 +13,21 @@ here are upstream sources with the adapter layer rewritten — see
 All credit for the plugin itself goes to the upstream author. Bugs in the
 patches are not upstream's problem; report plugin bugs upstream and packaging
 bugs here.
+
+## v0.4.51 highlights
+
+- `/help` now returns an interactive Feishu card with the complete plugin/chat
+  command reference, common one-click actions, parameter-prefill buttons, and a
+  command input form. Card actions remain bound to the originating user and chat.
+- Duplicate Feishu deliveries of the same command are suppressed within the
+  existing five-second content window, preventing one `/help` message from
+  producing two cards when event IDs differ.
+- OMP daemon launch behavior can be configured through `ompLaunch`, including
+  skills, tools, approval mode, maximum session time, appended system prompt,
+  and additional workspace directories.
+- Installer startup, OS auto-start, daemon recovery, and the disposable RPC
+  readiness check now use the same normalized OMP launch options.
+- The OMP peer range is limited to the tested 17.x API line.
 
 ## Install
 
@@ -177,10 +192,42 @@ used to suppress repeat delivery. The same settings can be supplied through
 `FEISHU_NOTIFY_WEBHOOK_PORT`, `FEISHU_NOTIFY_WEBHOOK_PATH`, and
 `FEISHU_NOTIFY_WEBHOOK_TOKEN`.
 
+### OMP daemon launch options
+
+Add an optional `ompLaunch` object to `~/.omp/agent/feishu/config.json` when the
+remote OMP workers need a non-default tool or skill policy:
+
+```json
+{
+  "ompLaunch": {
+    "enableSkills": true,
+    "skills": ["git-*", "docker"],
+    "tools": ["read", "bash", "edit", "write"],
+    "approvalMode": "write",
+    "maxTime": "30m",
+    "appendSystemPrompt": "Keep tests green before finishing.",
+    "addDirs": ["/srv/shared-project"]
+  }
+}
+```
+
+`approvalMode` accepts `always-ask`, `write`, or `yolo`. `maxTime` accepts a
+number with an optional `s`, `m`, or `h` suffix. Skills remain disabled by
+default; set `enableSkills` to `true` to omit the daemon's default
+`--no-skills` flag.
+
+Environment-only configurations can use `FEISHU_OMP_ENABLE_SKILLS`,
+`FEISHU_OMP_SKILLS`, `FEISHU_OMP_TOOLS`, `FEISHU_OMP_APPROVAL_MODE`,
+`FEISHU_OMP_MAX_TIME`, `FEISHU_OMP_APPEND_SYSTEM_PROMPT`, and
+`FEISHU_OMP_ADD_DIRS`. List values are comma-separated.
+
 ### Commands
 
 Run `/feishu help` in OMP, or send `/feishu help` or `/help` to the bot, for a
-Chinese description of every plugin and chat command.
+Chinese description of every plugin and chat command. In Feishu, the response
+is an interactive card: common commands execute directly, parameterized
+commands can prefill the form, and the current OMP session's available slash
+commands are appended below the static reference.
 
 Administrators can send `/send PATH` in Feishu to upload a file from the current chat workspace.
 Supported images are sent as image messages; other files are uploaded through the
@@ -258,7 +305,7 @@ the installer writes them with mode `600`.
 
 ## Patches in this build
 
-### 1. SDK 17.2.10 adapter (`conversation-manager.ts`, `index.ts`, `setup.ts`)
+### 1. SDK 17 adapter (`conversation-manager.ts`, `index.ts`, `setup.ts`)
 
 - `ModelRuntime` no longer exists → `discoverModels(discoverAuthStorage(agentDir), agentDir)`
   returning a `ModelRegistry`.
@@ -268,7 +315,7 @@ the installer writes them with mode `600`.
 
 ### 2. `SessionManager.open` signature fix (`conversation-manager.ts`)
 
-The 17.2.10 signature is
+The supported SDK range uses the signature
 `open(filePath, sessionDir?, storage?, options?: { initialCwd?, suppressBreadcrumb? })`
 and returns a Promise. The old call passed the workspace cwd into the `storage`
 slot, producing `storage.statSync is not a function`. Now:

@@ -13,6 +13,20 @@ test("installer RPC self-test accepts a ready worker", async () => {
   rmSync(root, { recursive: true, force: true });
 });
 
+test("installer RPC self-test forwards ompLaunch flags", async () => {
+  const root = tempRoot();
+  const cli = join(root, "args.mjs");
+  writeFileSync(cli, 'if (!process.argv.includes("--skills") || !process.argv.includes("git-*")) process.exit(9); process.stdout.write(JSON.stringify({ type: "ready", protocolVersion: 1 }) + "\\n"); process.stdin.resume();\n');
+  await verifyRpcWorkerReady({
+    bunBin: process.execPath,
+    ompCliPath: cli,
+    workspace: root,
+    timeoutMs: 2_000,
+    ompLaunch: { enableSkills: true, skills: ["git-*"] },
+  });
+  rmSync(root, { recursive: true, force: true });
+});
+
 test("installer RPC self-test reports a worker that exits before ready", async () => {
   const root = tempRoot();
   const cli = join(root, "broken.mjs");

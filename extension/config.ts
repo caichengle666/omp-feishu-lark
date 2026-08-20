@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, chmodSync, renameSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import type { CardActionMode, Domain, FeishuConfig, GroupPolicy } from "./types.js";
+import type { CardActionMode, Domain, FeishuConfig, FeishuOmpLaunch, GroupPolicy, OmpApprovalMode } from "./types.js";
 import { getAgentDir } from "@oh-my-pi/pi-coding-agent";
 
 // This is an OMP extension. OMP owns profile resolution; use its canonical
@@ -107,6 +107,7 @@ export function loadConfig(): FeishuConfig | undefined {
       promptNotifySec: parseEnvSeconds(process.env.FEISHU_PROMPT_NOTIFY_SEC) ?? DEFAULT_CONFIG.promptNotifySec,
       promptTimeoutSec: parseEnvSeconds(process.env.FEISHU_PROMPT_TIMEOUT_SEC) ?? DEFAULT_CONFIG.promptTimeoutSec,
       promptTimeoutEnabled: parseEnvBoolean(process.env.FEISHU_PROMPT_TIMEOUT_ENABLED) ?? DEFAULT_CONFIG.promptTimeoutEnabled,
+      ompLaunch: parseOmpLaunchEnv(),
     });
   }
   if (!existsSync(CONFIG_PATH)) return undefined;
@@ -133,6 +134,7 @@ export function loadConfig(): FeishuConfig | undefined {
     promptNotifySec: numberOr(cfg.promptNotifySec, DEFAULT_CONFIG.promptNotifySec),
     promptTimeoutSec: numberOr(cfg.promptTimeoutSec, DEFAULT_CONFIG.promptTimeoutSec),
     promptTimeoutEnabled: cfg.promptTimeoutEnabled ?? DEFAULT_CONFIG.promptTimeoutEnabled,
+    ompLaunch: normalizeOmpLaunch(cfg.ompLaunch),
   });
 }
 
@@ -179,6 +181,7 @@ export function validateConfig(value: unknown): FeishuConfig | undefined {
     promptNotifySec,
     promptTimeoutSec,
     promptTimeoutEnabled: typeof raw.promptTimeoutEnabled === "boolean" ? raw.promptTimeoutEnabled : DEFAULT_CONFIG.promptTimeoutEnabled,
+    ompLaunch: normalizeOmpLaunch(raw.ompLaunch),
   };
 }
 
@@ -194,6 +197,63 @@ function normalizeAdminOpenIds(value: unknown) {
   if (!Array.isArray(value)) return undefined;
   const ids = [...new Set(value.filter((item): item is string => typeof item === "string").map((item) => item.trim()).filter(Boolean))];
   return ids.length ? ids : undefined;
+}
+
+export function normalizeOmpLaunch(value: unknown): FeishuOmpLaunch | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const raw = value as Partial<FeishuOmpLaunch>;
+  const skills = normalizeStringList(raw.skills);
+  const tools = normalizeStringList(raw.tools);
+  const addDirs = normalizeStringList(raw.addDirs);
+  const approvalMode = parseOmpApprovalMode(raw.approvalMode);
+  const maxTime = normalizeDuration(raw.maxTime);
+  const appendSystemPrompt = typeof raw.appendSystemPrompt === "string" && raw.appendSystemPrompt.trim() ? raw.appendSystemPrompt.trim() : undefined;
+  const enableSkills = typeof raw.enableSkills === "boolean" ? raw.enableSkills : undefined;
+  if (enableSkills === undefined && skills === undefined && tools === undefined && addDirs === undefined && approvalMode === undefined && maxTime === undefined && appendSystemPrompt === undefined) return undefined;
+  return {
+    enableSkills,
+    skills,
+    tools,
+    approvalMode,
+    maxTime,
+    appendSystemPrompt,
+    addDirs,
+  };
+}
+
+function parseOmpLaunchEnv(): FeishuOmpLaunch | undefined {
+  const enableSkills = parseEnvBoolean(process.env.FEISHU_OMP_ENABLE_SKILLS);
+  const skills = parseCsvEnv(process.env.FEISHU_OMP_SKILLS);
+  const tools = parseCsvEnv(process.env.FEISHU_OMP_TOOLS);
+  const addDirs = parseCsvEnv(process.env.FEISHU_OMP_ADD_DIRS);
+  const approvalMode = parseOmpApprovalMode(process.env.FEISHU_OMP_APPROVAL_MODE);
+  const maxTime = normalizeDuration(process.env.FEISHU_OMP_MAX_TIME);
+  const appendSystemPrompt = process.env.FEISHU_OMP_APPEND_SYSTEM_PROMPT?.trim() || undefined;
+  const value = normalizeOmpLaunch({ enableSkills, skills, tools, addDirs, approvalMode, maxTime, appendSystemPrompt });
+  return value;
+}
+
+function parseCsvEnv(value: string | undefined) {
+  if (!value) return undefined;
+  const items = value.split(",").map((item) => item.trim()).filter(Boolean);
+  return items.length ? [...new Set(items)] : undefined;
+}
+
+function normalizeStringList(value: unknown) {
+  if (!Array.isArray(value)) return undefined;
+  const items = value.filter((item): item is string => typeof item === "string").map((item) => item.trim()).filter(Boolean);
+  return items.length ? [...new Set(items)] : undefined;
+}
+
+function parseOmpApprovalMode(value: unknown): OmpApprovalMode | undefined {
+  return value === "always-ask" || value === "write" || value === "yolo" ? value : undefined;
+}
+
+function normalizeDuration(value: unknown) {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (!/^\d+(?:\.\d+)?(?:[smh])?$/.test(trimmed)) return undefined;
+  return trimmed;
 }
 
 function parseEnvSeconds(value: string | undefined) {

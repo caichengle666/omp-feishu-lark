@@ -33,6 +33,30 @@ test("bot parser recognizes compact and autocompact commands", () => {
   assert.deepEqual(parseBotCommand("/feishu commands"), { name: "commands" });
 });
 
+test("duplicate help deliveries within the content window produce one card", async () => {
+  const cards = [];
+  const transport = {
+    getBotOpenId: () => undefined,
+    replyCard: async (_messageId, card) => { cards.push(card); },
+  };
+  const handler = new FeishuMessageHandler({
+    listOmpCommands: async () => [],
+  }, () => transport);
+  const message = (messageId) => ({
+    messageId,
+    chatId: "oc_help_dedupe",
+    chatType: "p2p",
+    senderOpenId: "ou_help_dedupe",
+    msgType: "text",
+    content: JSON.stringify({ text: "/help" }),
+  });
+
+  const suffix = `${process.pid}_${Date.now()}_${Math.random()}`;
+  await handler.handle(message(`om_help_1_${suffix}`));
+  await handler.handle(message(`om_help_2_${suffix}`));
+  assert.equal(cards.length, 1);
+});
+
 test("effort without a level reports the current thinking level", async () => {
   const replies = [];
   const transport = { replyText: async (_messageId, text) => { replies.push(text); } };

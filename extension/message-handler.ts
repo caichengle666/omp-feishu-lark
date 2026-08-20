@@ -1,5 +1,5 @@
 import { detectCodeLanguage, decodeTextFile, detectImageMime, type FeishuImageInput, isSupportedImageMime, isSupportedTextFile } from "./attachments.js";
-import { buildModelCard, buildResumeCard } from "./cards.js";
+import { buildHelpCard, buildModelCard, buildResumeCard } from "./cards.js";
 import { formatUserFacingError, type ConversationManager } from "./conversation-manager.js";
 import { claimFeishuMessage, markFeishuMessage } from "./dedupe-store.js";
 import { debugLog } from "./debug.js";
@@ -76,6 +76,10 @@ export class FeishuMessageHandler {
 
       if (!parsed.attachments.length) {
         if (!text) {
+          await markFeishuMessage(msg.messageId, "ignored");
+          return;
+        }
+        if (parseBotCommand(text) && this.isDuplicateContent(msg, key, text, parsed.attachments)) {
           await markFeishuMessage(msg.messageId, "ignored");
           return;
         }
@@ -240,7 +244,7 @@ export class FeishuMessageHandler {
       } catch (error) {
         debugLog("feishu.help.commands_error", { messageId: msg.messageId, error: error instanceof Error ? error.message : String(error) });
       }
-      await transport.replyText(msg.messageId, feishuHelpText(ompCommands));
+      await transport.replyCard(msg.messageId, buildHelpCard({ key, ownerOpenId: msg.senderOpenId, chatId: msg.chatId, chatType: msg.chatType, ompCommands }));
       return true;
     }
 
@@ -419,6 +423,15 @@ export class FeishuMessageHandler {
     return false;
   }
 
+  async handleCardCommand(msg: FeishuMessage, key: string, text: string) {
+    const transport = this.getTransport();
+    if (!transport) return false;
+    const handled = await this.handleCommand(msg, key, text);
+    if (!handled) {
+      await transport.replyText(msg.messageId, "该命令不支持从飞书卡片执行，请直接输入 /help 查看支持的命令。");
+    }
+    return true;
+  }
   private isDuplicateContent(msg: FeishuMessage, key: string, text: string, attachments: Array<{ kind: string; fileKey: string; fileName?: string }>) {
     const now = Date.now();
     const attachmentKey = attachments.map((a) => `${a.kind}:${a.fileKey}:${a.fileName || ""}`).join("|");
