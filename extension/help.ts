@@ -8,9 +8,9 @@ export type OmpCommandInfo = {
 
 export function feishuHelpText(ompCommands?: ReadonlyArray<OmpCommandInfo>) {
   const lines = [
-    "插件管理命令（OMP 中运行；管理员也可在飞书直接执行）：",
+    "插件管理命令（OMP 中运行；管理员也可在飞书执行 start、stop、restart、autostart、reset）：",
     "管理员可在飞书发送：/feishu start、/feishu stop、/feishu restart、/feishu autostart、/feishu reset",
-    "/feishu setup - 配置飞书应用",
+    "/feishu setup - 配置飞书应用（需要 OMP 终端交互，飞书端不能执行）",
     "/feishu start - 启动飞书连接",
     "/feishu stop - 停止飞书连接",
     "/feishu restart - 重启连接并加载最新代码和配置",
@@ -21,12 +21,12 @@ export function feishuHelpText(ompCommands?: ReadonlyArray<OmpCommandInfo>) {
     "/feishu help 或 /help - 查看全部命令及用途",
     "/feishu doctor 或 /doctor - 检查配置、OMP、模型和 daemon",
     "/feishu version 或 /version - 查看插件、OMP 和 Bun 版本",
-    "/feishu upgrade - 升级插件到最新版（可指定版本：/feishu upgrade 0.4.14）",
+    "/feishu upgrade - 管理员安装最新版；指定版本可升级或降级（例如：/feishu upgrade 0.4.14）",
     "/feishu status - 查看连接状态和运行位置",
     "/feishu config - 查看脱敏配置（管理员）",
     "/feishu debug - 查看最近的调试日志（管理员）",
     "/feishu refresh - 刷新 OMP 模型列表（管理员）",
-    "/feishu commands 或 /commands - 查看当前 OMP 会话可用的斜杠命令",
+    "/feishu commands 或 /commands - 说明 OMP 原生命令仅能在本机终端执行",
     "/new - 新建当前飞书会话（群聊需管理员）",
     "/resume - 恢复当前飞书会话保存过的历史会话（群聊需管理员）",
     "/model - 选择当前聊天使用的模型（群聊需管理员）",

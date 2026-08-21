@@ -166,6 +166,8 @@ test("feishu help documents the effort command", () => {
   assert.match(help, /\/compact/);
   assert.match(help, /\/autocompact/);
   assert.match(help, /\/commands/);
+  assert.match(help, /飞书端不能执行/);
+  assert.match(help, /指定版本可升级或降级/);
   assert.match(formatOmpCommands([
     { name: "review", aliases: ["code-review"], description: "Review the current diff", input: { hint: "depth" } },
   ]), /\/review、\/code-review depth - Review the current diff/);

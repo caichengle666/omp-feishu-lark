@@ -1,7 +1,7 @@
 # Feishu/Lark OMP plugin — patched build
 
 A patched redistribution of [**AX1202/pi-feishu-lark**](https://github.com/AX1202/pi-feishu-lark)
-(v0.2.4, MIT) that supports SDK `@oh-my-pi/pi-coding-agent >=17.2.12 <18`, plus a
+(v0.2.4, MIT) that supports SDK `@oh-my-pi/pi-coding-agent >=17.2.12`, plus a
 self-contained installer.
 
 Upstream targets `@earendil-works/pi-coding-agent`; on the newer SDK the plugin
@@ -14,11 +14,20 @@ All credit for the plugin itself goes to the upstream author. Bugs in the
 patches are not upstream's problem; report plugin bugs upstream and packaging
 bugs here.
 
-## v0.4.51 highlights
+## v0.4.53 highlights
+
+- `/feishu refresh` now forces an online model registry refresh instead of only refreshing a prewarmed cache, and reports the resulting model count.
+- The internal OMP model database is refreshed; hand-edited `models.yml` remains untouched.
+- Remaining Feishu-facing fallback labels now use the OMP brand.
+
+## v0.4.52 highlights
+
 
 - `/help` now returns an interactive Feishu card with the complete plugin/chat
   command reference, common one-click actions, parameter-prefill buttons, and a
   command input form. Card actions remain bound to the originating user and chat.
+- `/feishu upgrade <x.y.z>` now accepts both upgrades and downgrades; omitting the
+  version still follows the npm latest tag.
 - Duplicate Feishu deliveries of the same command are suppressed within the
   existing five-second content window, preventing one `/help` message from
   producing two cards when event IDs differ.
@@ -27,7 +36,7 @@ bugs here.
   and additional workspace directories.
 - Installer startup, OS auto-start, daemon recovery, and the disposable RPC
   readiness check now use the same normalized OMP launch options.
-- The OMP peer range is limited to the tested 17.x API line.
+- The OMP peer range accepts 17.2.12 and newer releases.
 
 ## Install
 
@@ -72,6 +81,15 @@ To update an existing installation to the newest published version, run:
 ```bash
 bunx @caichengle/omp-feishu-lark@latest
 ```
+
+To install a specific published version, including a downgrade, run:
+
+```text
+/feishu upgrade 0.4.14
+```
+
+When a version is specified, the installer pins that exact version. The command
+accepts both newer and older versions; omit the version to use the npm latest tag.
 
 The updater keeps `config.json`, conversation mappings, model configuration,
 and logs. It stops the old supervisor, prepares and compile-checks the complete

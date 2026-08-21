@@ -1,4 +1,4 @@
-import { feishuHelpText, formatOmpCommands, type OmpCommandInfo } from "./help.js";
+
 
 export function modelLabel(model: any) {
   if (!model) return "未选择";
@@ -30,7 +30,7 @@ export type HelpCardOptions = {
   ownerOpenId: string;
   chatId: string;
   chatType: "p2p" | "group";
-  ompCommands?: ReadonlyArray<OmpCommandInfo>;
+  isAdmin?: boolean;
   draft?: string;
 };
 
@@ -66,27 +66,73 @@ const HELP_RUN_BUTTONS: Array<{ label: string; command: string; type?: string }>
   { label: "恢复历史", command: "resume" },
   { label: "选择模型", command: "model" },
   { label: "停止任务", command: "stop" },
-  { label: "OMP 命令", command: "commands" },
-  { label: "高思考强度", command: "effort high", type: "primary" },
-  { label: "低思考强度", command: "effort low" },
   { label: "自动压缩开", command: "autocompact on" },
   { label: "自动压缩关", command: "autocompact off" },
   { label: "压缩上下文", command: "compact" },
+  { label: "当前思考强度", command: "effort" },
+  { label: "OMP 命令说明", command: "commands" },
+  { label: "当前自动压缩", command: "autocompact" },
 ];
 
-const HELP_FILL_BUTTONS: Array<{ label: string; draft: string }> = [
+const HELP_FILL_BUTTONS: Array<{ label: string; draft: string; adminOnly?: boolean }> = [
   { label: "填入 /effort", draft: "/effort " },
   { label: "填入 /compact", draft: "/compact " },
   { label: "填入 /workspace", draft: "/workspace " },
   { label: "填入 /send", draft: "/send " },
-  { label: "填入 /feishu upgrade", draft: "/feishu upgrade " },
+  { label: "指定版本升/降级", draft: "/feishu upgrade ", adminOnly: true },
+  { label: "确认重置插件", draft: "/feishu reset", adminOnly: true },
 ];
 
+const HELP_QUERY_BUTTONS: Array<{ label: string; command: string; type?: string }> = [
+  { label: "诊断", command: "doctor" },
+  { label: "版本", command: "version" },
+  { label: "状态", command: "status" },
+  { label: "配置（管理员）", command: "feishu config" },
+  { label: "日志（管理员）", command: "debug" },
+  { label: "刷新模型（管理员）", command: "refresh" },
+];
+
+const HELP_ADMIN_BUTTONS: Array<{ label: string; command: string; type?: string }> = [
+  { label: "启动", command: "feishu start" },
+  { label: "停止", command: "feishu stop" },
+  { label: "重启", command: "feishu restart" },
+  { label: "自启动", command: "feishu autostart" },
+];
+
+const HELP_EFFORT_BUTTONS: Array<{ label: string; command: string; type?: string }> = [
+  { label: "继承", command: "effort inherit" },
+  { label: "关闭", command: "effort off" },
+  { label: "极简", command: "effort minimal" },
+  { label: "低", command: "effort low" },
+  { label: "中", command: "effort medium" },
+  { label: "高", command: "effort high", type: "primary" },
+  { label: "极高", command: "effort xhigh" },
+  { label: "最高", command: "effort max" },
+];
 export function buildHelpCard(options: HelpCardOptions) {
+  const queryButtons = HELP_QUERY_BUTTONS.filter((entry) => options.isAdmin || !entry.command.includes("config") && entry.command !== "debug" && entry.command !== "refresh");
+  const fillButtons = HELP_FILL_BUTTONS.filter((entry) => options.isAdmin || !entry.adminOnly);
+  const adminElements = options.isAdmin
+    ? [
+        { tag: "markdown", content: "插件管理（管理员）：" },
+        ...buttonRow(HELP_ADMIN_BUTTONS.map((entry) => ({
+          label: entry.label,
+          type: entry.type,
+          value: {
+            action: "pi_feishu_help_run",
+            key: options.key,
+            chatType: options.chatType,
+            command: entry.command,
+            ownerOpenId: options.ownerOpenId,
+            chatId: options.chatId,
+          } satisfies HelpActionRun,
+        }))),
+      ]
+    : [];
   const elements: any[] = [
     {
       tag: "markdown",
-      content: `${feishuHelpText()}\n\n点击按钮即可执行常用操作；带参数的命令先填到下面输入框，补完参数后点 **执行**。`,
+      content: "命令都做成按钮，手机上直接点；OMP 自带命令不能在飞书执行，不再展示。点击按钮执行常用操作，带参数的命令先填到下面输入框，补完参数后点 **执行**。",
     },
     ...buttonRow(HELP_RUN_BUTTONS.map((entry) => ({
       label: entry.label,
@@ -100,12 +146,45 @@ export function buildHelpCard(options: HelpCardOptions) {
         chatId: options.chatId,
       } satisfies HelpActionRun,
     }))),
+    {
+      tag: "markdown",
+      content: "思考强度：",
+    },
+    ...buttonRow(HELP_EFFORT_BUTTONS.map((entry) => ({
+      label: entry.label,
+      type: entry.type,
+      value: {
+        action: "pi_feishu_help_run",
+        key: options.key,
+        chatType: options.chatType,
+        command: entry.command,
+        ownerOpenId: options.ownerOpenId,
+        chatId: options.chatId,
+      } satisfies HelpActionRun,
+    }))),
+    {
+      tag: "markdown",
+      content: "查询与状态：",
+    },
+    ...buttonRow(queryButtons.map((entry) => ({
+      label: entry.label,
+      type: entry.type,
+      value: {
+        action: "pi_feishu_help_run",
+        key: options.key,
+        chatType: options.chatType,
+        command: entry.command,
+        ownerOpenId: options.ownerOpenId,
+        chatId: options.chatId,
+      } satisfies HelpActionRun,
+    }))),
+    ...adminElements,
     { tag: "hr" },
     {
       tag: "markdown",
       content: "需要自己补参数的命令：",
     },
-    ...buttonRow(HELP_FILL_BUTTONS.map((entry) => ({
+    ...buttonRow(fillButtons.map((entry) => ({
       label: entry.label,
       value: {
         action: "pi_feishu_help_fill",
@@ -177,8 +256,7 @@ export function buildHelpCard(options: HelpCardOptions) {
     },
   ];
 
-  const ompText = options.ompCommands?.length ? formatOmpCommands(options.ompCommands) : "当前 OMP 会话暂无可用命令列表。";
-  elements.push({ tag: "markdown", content: ompText });
+  elements.push({ tag: "markdown", content: "OMP 自带斜杠命令只能在本机 OMP 终端运行，飞书端不能直接执行，因此不在帮助卡片展示。" });
 
   return {
     schema: "2.0",
@@ -351,7 +429,7 @@ export function buildResumeCard(data: ResumeSessionPage, ownerOpenId?: string, c
     config: sharedCardConfig(),
     header: {
       template: "turquoise",
-      title: { tag: "plain_text", content: "切换 Pi 历史会话" },
+      title: { tag: "plain_text", content: "切换 OMP 历史会话" },
     },
     elements,
   };

@@ -151,8 +151,9 @@ export default function feishuExtension(pi: ExtensionAPI) {
 
   async function refreshReport() {
     await conversations.refreshModels();
+    const models = await conversations.getAvailableModels();
     const owner = gatewayLock?.owner || readGatewayOwner();
-    return [`模型列表已刷新。`, `Owner: ${formatOwner(owner)}`, `Log: ${DAEMON_LOG_PATH}`].join("\n");
+    return [`模型列表已刷新，当前可用 ${models.length} 个。`, `Owner: ${formatOwner(owner)}`, `Log: ${DAEMON_LOG_PATH}`].join("\n");
   }
 
   function debugReport() {
@@ -350,14 +351,13 @@ export default function feishuExtension(pi: ExtensionAPI) {
           return;
         }
         if (helpAction.action === "pi_feishu_help_fill") {
-          const ompCommands = await conversations.listOmpCommands(helpAction.key).catch(() => []);
           return buildHelpCard({
             key: helpAction.key,
             ownerOpenId: helpAction.ownerOpenId,
             chatId: helpAction.chatId,
             chatType: helpAction.chatType,
+            isAdmin: isFeishuAdmin(loadConfig(), action.operatorOpenId),
             draft: helpAction.draft,
-            ompCommands,
           });
         }
         if (helpAction.action === "pi_feishu_help_submit") {
@@ -875,12 +875,10 @@ async function upgradeDaemon(targetVersion: string, noticeTarget?: NoticeTarget,
       target = resolved.version;
     }
     if (target === current) {
-      return `当前已是最新版本 ${current}，无需升级。`;
+      return `当前已是目标版本 ${current}，无需切换。`;
     }
-    if (compareVersions(target, current) < 0) {
-      return `目标版本 ${target} 低于当前版本 ${current}，拒绝降级。`;
-    }
-    onProgress?.(`已确认 v${target}，正在下载并安装`);
+    const direction = targetVersion && compareVersions(target, current) < 0 ? "降级" : "切换";
+    onProgress?.(`已确认 v${target}，正在${direction}并安装`);
     // 从自身入口自动定位真实安装目录，不依赖 cwd、环境变量或人工传参。
     const pluginDir = dirname(dirname(spec.extensionPath));
     // --no-restart：安装器只替换文件，不重启 daemon（避免 90s 超时与残留进程）。

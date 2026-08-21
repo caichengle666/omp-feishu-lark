@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildTaskStatusCard, describePiEvent, describeSubagentLifecycle, describeSubagentProgress, parseStopTaskActionValue, TaskStatusCard } from "../extension/task-status-card.ts";
+import { buildTaskStatusCard, describeOmpEvent, describeSubagentLifecycle, describeSubagentProgress, parseStopTaskActionValue, TaskStatusCard } from "../extension/task-status-card.ts";
 import { isAuthorizedCardAction, parseModelActionValue, parseResumeSelectActionValue } from "../extension/cards.ts";
 
 test("task status card shows truthful runtime and tool usage", () => {
@@ -88,9 +88,9 @@ test("card actions are bound to the originating Feishu user and chat", () => {
 });
 
 test("OMP events are translated into readable Chinese phases", () => {
-  assert.equal(describePiEvent({ type: "agent_start" }), "正在启动 OMP Agent");
-  assert.equal(describePiEvent({ type: "turn_start", turnIndex: 1 }), "开始第 2 轮处理");
-  assert.equal(describePiEvent({ type: "tool_execution_start", toolName: "bash" }), "正在执行工具：bash");
-  assert.equal(describePiEvent({ type: "tool_execution_end", toolName: "bash", isError: true }), "工具 bash：执行失败");
-  assert.equal(describePiEvent({ type: "compaction_start" }), "正在压缩会话上下文");
+  assert.equal(describeOmpEvent({ type: "agent_start" }), "正在启动 OMP Agent");
+  assert.equal(describeOmpEvent({ type: "turn_start", turnIndex: 1 }), "开始第 2 轮处理");
+  assert.equal(describeOmpEvent({ type: "tool_execution_start", toolName: "bash" }), "正在执行工具：bash");
+  assert.equal(describeOmpEvent({ type: "tool_execution_end", toolName: "bash", isError: true }), "工具 bash：执行失败");
+  assert.equal(describeOmpEvent({ type: "compaction_start" }), "正在压缩会话上下文");
 });

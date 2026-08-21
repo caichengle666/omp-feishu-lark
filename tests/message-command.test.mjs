@@ -185,7 +185,7 @@ test("compact passes focus instructions to the conversation manager", async () =
   assert.deepEqual(replies, ["上下文已压缩。"]);
 });
 
-test("commands fetches available OMP slash commands", async () => {
+test("commands explains OMP commands are terminal-only", async () => {
   const replies = [];
   const transport = { replyText: async (_messageId, text) => { replies.push(text); } };
   const handler = new FeishuMessageHandler({
@@ -204,9 +204,7 @@ test("commands fetches available OMP slash commands", async () => {
   };
 
   assert.equal(await handler.handleCommand(message, "p2p:ou_user", "/commands"), true);
-  assert.match(replies[0], /当前 OMP 会话可用命令/);
-  assert.match(replies[0], /\/compact/);
-  assert.match(replies[0], /\/review/);
+  assert.match(replies[0], /OMP 自带命令/);
 });
 
 test("Feishu setup replies with OMP guidance instead of sending the text to the model", async () => {

@@ -89,7 +89,7 @@ export class TaskStatusCard implements TaskStatusSink {
     } else if (raw?.type === "tool_execution_end") {
       this.currentTool = undefined;
     }
-    const phase = describePiEvent(event);
+    const phase = describeOmpEvent(event);
     if (!phase) return;
     void this.updateRunningPhase(phase);
   }
@@ -372,7 +372,7 @@ export function parseStopTaskActionValue(value: unknown): { key: string; runId?:
   };
 }
 
-export function describePiEvent(event: unknown): string | undefined {
+export function describeOmpEvent(event: unknown): string | undefined {
   if (!event || typeof event !== "object") return undefined;
   const raw = event as any;
   switch (raw.type) {

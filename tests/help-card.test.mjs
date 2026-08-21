@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { buildHelpCard, isAuthorizedCardAction, parseHelpActionValue } from "../extension/cards.ts";
+import { parseBotCommand } from "../extension/messages.ts";
 
 const options = {
   key: "group:oc_1",
   ownerOpenId: "ou_owner",
   chatId: "oc_1",
   chatType: "group",
-  ompCommands: [{ name: "review", description: "Review current diff" }],
+  isAdmin: true,
   draft: "/effort ",
 };
 
@@ -21,9 +22,23 @@ test("help card uses JSON 2.0 with run, fill, and submit actions", () => {
   assert.match(raw, /"pi_feishu_help_submit"/);
   assert.match(raw, /"help_command_input"/);
   assert.match(raw, /"default_value":"\/effort "/);
-  assert.match(raw, /\/feishu doctor/);
-  assert.match(raw, /\/workspace PATH/);
-  assert.match(raw, /\/review/);
+  assert.match(raw, /"command":"doctor"/);
+  assert.match(raw, /"draft":"\/workspace "/);
+  assert.match(raw, /指定版本升\/降级/);
+  assert.match(raw, /确认重置插件/);
+  assert.doesNotMatch(raw, /\/review/);
+  assert.match(raw, /OMP 自带斜杠命令/);
+});
+
+test("non-admin help cards hide administrator-only actions", () => {
+  const raw = JSON.stringify(buildHelpCard({ ...options, isAdmin: false }));
+  assert.doesNotMatch(raw, /插件管理（管理员）/);
+  assert.doesNotMatch(raw, /配置（管理员）/);
+  assert.doesNotMatch(raw, /日志（管理员）/);
+  assert.doesNotMatch(raw, /刷新模型（管理员）/);
+  assert.match(raw, /诊断/);
+  assert.match(raw, /版本/);
+  assert.match(raw, /状态/);
 });
 
 test("help action parser extracts run, fill, and submit values", () => {
@@ -72,4 +87,30 @@ test("help card actions are bound to the originating user and chat", () => {
   assert.equal(isAuthorizedCardAction(value, { operatorOpenId: "ou_owner", chatId: "oc_1" }), true);
   assert.equal(isAuthorizedCardAction(value, { operatorOpenId: "ou_other", chatId: "oc_1" }), false);
   assert.equal(isAuthorizedCardAction(value, { operatorOpenId: "ou_owner", chatId: "oc_other" }), false);
+});
+
+test("every help card run/fill value parses through parseBotCommand", () => {
+  const card = buildHelpCard(options);
+  const values = [];
+  const walk = (node) => {
+    if (!node || typeof node !== "object") return;
+    if (Array.isArray(node)) {
+      for (const item of node) walk(item);
+      return;
+    }
+    if (typeof node.action === "string" && node.action.startsWith("pi_feishu_help_")) {
+      values.push(node);
+    }
+    for (const item of Object.values(node)) walk(item);
+  };
+  walk(card);
+  assert.ok(values.length > 10);
+  for (const value of values) {
+    if (typeof value.command === "string") {
+      assert.ok(parseBotCommand(`/${value.command}`), `unparsable command: /${value.command}`);
+    }
+    if (typeof value.draft === "string") {
+      assert.ok(parseBotCommand(value.draft), `unparsable draft: ${value.draft}`);
+    }
+  }
 });

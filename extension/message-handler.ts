@@ -238,23 +238,18 @@ export class FeishuMessageHandler {
     }
 
     if (command.name === "help") {
-      let ompCommands: any[] = [];
-      try {
-        ompCommands = await this.conversations.listOmpCommands(key);
-      } catch (error) {
-        debugLog("feishu.help.commands_error", { messageId: msg.messageId, error: error instanceof Error ? error.message : String(error) });
-      }
-      await transport.replyCard(msg.messageId, buildHelpCard({ key, ownerOpenId: msg.senderOpenId, chatId: msg.chatId, chatType: msg.chatType, ompCommands }));
+      await transport.replyCard(msg.messageId, buildHelpCard({
+        key,
+        ownerOpenId: msg.senderOpenId,
+        chatId: msg.chatId,
+        chatType: msg.chatType,
+        isAdmin: this.diagnostics?.isAdmin?.(msg.senderOpenId) === true,
+      }));
       return true;
     }
 
     if (command.name === "commands") {
-      try {
-        const commands = await this.conversations.listOmpCommands(key);
-        await transport.replyText(msg.messageId, commands.length ? formatOmpCommands(commands) : "当前 OMP 会话暂无可用命令列表。");
-      } catch (error) {
-        await transport.replyText(msg.messageId, `无法获取 OMP 命令列表：${error instanceof Error ? error.message : String(error)}`);
-      }
+      await transport.replyText(msg.messageId, "OMP 自带命令只支持在本机 OMP 终端运行，飞书端不能直接执行，因此不在帮助卡片展示。");
       return true;
     }
 

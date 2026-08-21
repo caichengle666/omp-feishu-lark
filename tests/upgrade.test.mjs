@@ -22,6 +22,7 @@ test("compareVersions orders semver correctly", () => {
 
 test("resolveTargetVersion pins valid versions and rejects malformed ones", () => {
   assert.deepEqual(resolveTargetVersion("0.4.14", "0.4.13"), { ok: true, version: "0.4.14" });
+  assert.deepEqual(resolveTargetVersion("0.4.12", "0.4.51"), { ok: true, version: "0.4.12" });
   assert.deepEqual(resolveTargetVersion("", "0.4.14"), { ok: true, version: "0.4.14" });
   assert.equal(resolveTargetVersion("abc", "0.4.14").ok, false);
   assert.equal(resolveTargetVersion("", undefined).ok, false);

@@ -461,10 +461,8 @@ export class ConversationManager {
   }
 
   async refreshModels(): Promise<void> {
-    if (this.modelRegistryPromise) {
-      const registry = await this.modelRegistryPromise;
-      await registry.refresh();
-    }
+    const registry = await this.getModelRegistry();
+    await registry.refresh("online");
   }
 
   private async getModelRegistry(): Promise<ModelRegistry> {
