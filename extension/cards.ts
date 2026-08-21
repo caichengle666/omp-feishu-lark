@@ -97,6 +97,8 @@ const HELP_ADMIN_BUTTONS: Array<{ label: string; command: string; type?: string 
   { label: "停止", command: "feishu stop" },
   { label: "重启", command: "feishu restart" },
   { label: "自启动", command: "feishu autostart" },
+  { label: "Skill 开启", command: "feishu skills on" },
+  { label: "Skill 关闭", command: "feishu skills off" },
 ];
 
 const HELP_EFFORT_BUTTONS: Array<{ label: string; command: string; type?: string }> = [

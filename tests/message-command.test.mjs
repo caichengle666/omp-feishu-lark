@@ -13,7 +13,29 @@ test("bot parser recognizes /feishu setup as a plugin command", () => {
   assert.deepEqual(parseBotCommand("/FEISHU STOP"), { name: "pluginStop" });
   assert.deepEqual(parseBotCommand("/feishu restart"), { name: "pluginRestart" });
   assert.deepEqual(parseBotCommand("/feishu autostart"), { name: "autostart" });
+  assert.deepEqual(parseBotCommand("/feishu skills on"), { name: "skills", enabled: "on" });
+  assert.deepEqual(parseBotCommand("/FEISHU SKILLS OFF"), { name: "skills", enabled: "off" });
   assert.deepEqual(parseBotCommand("/feishu reset"), { name: "reset" });
+});
+
+test("skills lifecycle commands require admin and restart with the selected state", async () => {
+  const replies = [];
+  const calls = [];
+  const transport = { replyText: async (_messageId, text) => { replies.push(text); } };
+  const handler = new FeishuMessageHandler({}, () => transport, undefined, {
+    isAdmin: () => true,
+    lifecycle: {
+      skills: async (enabled, target) => {
+        calls.push({ enabled, target });
+        return "Skill 已切换";
+      },
+    },
+  });
+  const message = { messageId: "om_skills", chatId: "oc_chat", chatType: "p2p", senderOpenId: "ou_admin", msgType: "text", content: "" };
+  assert.equal(await handler.handleCommand(message, "p2p:ou_admin", "/feishu skills on"), true);
+  assert.equal(calls[0].enabled, true);
+  assert.equal(await handler.handleCommand(message, "p2p:ou_admin", "/feishu skills"), true);
+  assert.match(replies.at(-1), /用法/);
 });
 
 test("bot parser recognizes /effort with or without a level", () => {

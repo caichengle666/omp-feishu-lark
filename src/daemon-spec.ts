@@ -16,8 +16,8 @@ export type OmpLaunchOptions = {
 export function normalizeOmpLaunch(value: unknown): OmpLaunchOptions | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const raw = value as Record<string, unknown>;
-  const enableSkills = typeof raw.enableSkills === "boolean" ? raw.enableSkills : undefined;
   const skills = normalizeStringList(raw.skills);
+  const enableSkills = typeof raw.enableSkills === "boolean" ? raw.enableSkills : skills !== undefined ? true : undefined;
   const tools = normalizeStringList(raw.tools);
   const addDirs = normalizeStringList(raw.addDirs);
   const approvalMode = raw.approvalMode === "always-ask" || raw.approvalMode === "write" || raw.approvalMode === "yolo"
@@ -86,12 +86,7 @@ export function buildDaemonSpec(input: DaemonSpecInput): DaemonSpec {
   const launch = input.ompLaunch;
   if (!launch?.enableSkills) daemonArgs.push("--no-skills");
   daemonArgs.push("--allow-home", "--cwd", input.workspace, "-e", input.extensionPath);
-  if (launch?.skills?.length) daemonArgs.push("--skills", launch.skills.join(","));
-  if (launch?.tools?.length) daemonArgs.push("--tools", launch.tools.join(","));
-  if (launch?.approvalMode) daemonArgs.push("--approval-mode", launch.approvalMode);
-  if (launch?.maxTime) daemonArgs.push("--max-time", launch.maxTime);
-  if (launch?.appendSystemPrompt) daemonArgs.push("--append-system-prompt", launch.appendSystemPrompt);
-  for (const dir of launch?.addDirs || []) daemonArgs.push("--add-dir", dir);
+  daemonArgs.push(...buildOmpLaunchArgs(launch, false));
 
   const bunDir = dirname(input.bunBin);
   const homeDir = input.homeDir || homedir();
@@ -140,4 +135,16 @@ export function buildDaemonSpec(input: DaemonSpecInput): DaemonSpec {
     ],
     env,
   };
+}
+
+export function buildOmpLaunchArgs(launch?: OmpLaunchOptions, includeNoSkills = true): string[] {
+  const args: string[] = [];
+  if (includeNoSkills && !launch?.enableSkills) args.push("--no-skills");
+  if (launch?.enableSkills && launch.skills?.length) args.push("--skills", launch.skills.join(","));
+  if (launch?.tools?.length) args.push("--tools", launch.tools.join(","));
+  if (launch?.approvalMode) args.push("--approval-mode", launch.approvalMode);
+  if (launch?.maxTime) args.push("--max-time", launch.maxTime);
+  if (launch?.appendSystemPrompt) args.push("--append-system-prompt", launch.appendSystemPrompt);
+  for (const dir of launch?.addDirs || []) args.push("--add-dir", dir);
+  return args;
 }

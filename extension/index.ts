@@ -10,7 +10,7 @@ import { isSupervisorProcessAlive, readSupervisorRecord, recordedProcessStatus, 
 import { AGENT_DIR, BRIDGE_PATH, CONFIG_PATH, DAEMON_LOG_PATH, DEBUG_LOG_PATH, DEDUPE_PATH, ensureRoot, isFeishuAdmin, loadConfig, mask, readJson, removePath, RESTART_NOTICE_PATH, ROOT_DIR, STATE_PATH, SUPERVISOR_PID_PATH, SUPERVISOR_STOP_PATH, UPGRADE_NOTICE_PATH, writeJson } from "./config.js";
 import { debugLog, flushDebugLog } from "./debug.js";
 import { ensureAutoStart, inspectAutoStart } from "../src/autostart.js";
-import { buildDaemonSpec } from "../src/daemon-spec.js";
+import { buildDaemonSpec, buildOmpLaunchArgs } from "../src/daemon-spec.js";
 import { recoverOrphanDaemon } from "../src/orphan-recovery.js";
 import { FeishuBridgeRuntime } from "./bridge-runtime.js";
 import { FeishuBridgeStore } from "./bridge-store.js";
@@ -63,7 +63,7 @@ export default function feishuExtension(pi: ExtensionAPI) {
     ? new FeishuRpcWorkerPool(({ cwd }) => new RpcClient({
         cwd,
         cliPath: ompCliPath,
-        args: ["--no-extensions"],
+        args: ["--no-extensions", ...buildOmpLaunchArgs(bootConfig?.ompLaunch)],
       }))
     : undefined;
   const conversations = new ConversationManager(process.cwd(), bridge, {
@@ -86,6 +86,7 @@ export default function feishuExtension(pi: ExtensionAPI) {
       stop: () => remoteLifecycleStop(),
       restart: (target?: NoticeTarget) => remoteLifecycleRestart(target),
       autostart: () => remoteLifecycleAutostart(),
+      skills: (enabled, target) => remoteLifecycleSkills(enabled, target),
       reset: () => remoteLifecycleReset(),
     },
   });
@@ -815,6 +816,15 @@ export default function feishuExtension(pi: ExtensionAPI) {
     return `${enabled ? "飞书自动启动已开启" : "飞书自动启动已关闭"}。\n${result.message}`;
   }
 
+  async function remoteLifecycleSkills(enabled: boolean, target?: NoticeTarget) {
+    const cfg = loadConfig();
+    if (!cfg) throw new Error("Missing config. Run /feishu setup first. 配置不存在，请先运行 /feishu setup。");
+    cfg.ompLaunch = { ...(cfg.ompLaunch || {}), enableSkills: enabled };
+    writeJson(CONFIG_PATH, cfg);
+    const report = await remoteLifecycleRestart(target);
+    return `OMP Skill 已${enabled ? "开启" : "关闭"}，正在重启以应用到新的 RPC worker。${report ? `\n${report}` : ""}`;
+  }
+
   async function remoteLifecycleReset() {
     if (process.env.PI_FEISHU_DAEMON === "1") {
       if (pendingDaemonLifecycle) return `已有飞书${pendingDaemonLifecycle === "restart" ? "重启" : "停止"}操作正在执行，请等待完成。`;
@@ -948,9 +958,9 @@ async function upgradeDaemon(targetVersion: string, noticeTarget?: NoticeTarget,
   }
 
   pi.registerCommand("feishu", {
-    description: "Feishu/Lark: help, setup, start, stop, restart, refresh, status, config, doctor, version, debug, autostart, upgrade, reset",
+    description: "Feishu/Lark: help, setup, start, stop, restart, refresh, status, config, doctor, version, debug, autostart, skills, upgrade, reset",
     getArgumentCompletions: (prefix) => {
-      const commands = ["help", "setup", "start", "stop", "restart", "refresh", "status", "config", "doctor", "version", "debug", "autostart", "upgrade", "reset"];
+      const commands = ["help", "setup", "start", "stop", "restart", "refresh", "status", "config", "doctor", "version", "debug", "autostart", "skills", "upgrade", "reset"];
       const query = prefix.trim().toLowerCase();
       return commands
         .filter((command) => command.startsWith(query))

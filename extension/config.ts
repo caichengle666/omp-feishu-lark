@@ -208,7 +208,7 @@ export function normalizeOmpLaunch(value: unknown): FeishuOmpLaunch | undefined 
   const approvalMode = parseOmpApprovalMode(raw.approvalMode);
   const maxTime = normalizeDuration(raw.maxTime);
   const appendSystemPrompt = typeof raw.appendSystemPrompt === "string" && raw.appendSystemPrompt.trim() ? raw.appendSystemPrompt.trim() : undefined;
-  const enableSkills = typeof raw.enableSkills === "boolean" ? raw.enableSkills : undefined;
+  const enableSkills = typeof raw.enableSkills === "boolean" ? raw.enableSkills : skills !== undefined ? true : undefined;
   if (enableSkills === undefined && skills === undefined && tools === undefined && addDirs === undefined && approvalMode === undefined && maxTime === undefined && appendSystemPrompt === undefined) return undefined;
   return {
     enableSkills,
