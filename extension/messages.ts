@@ -24,7 +24,11 @@ export type BotCommand =
   | { name: "pluginStop" }
   | { name: "pluginRestart" }
   | { name: "autostart" }
-  | { name: "reset" };
+  | { name: "reset" }
+  | { name: "gatewayList" }
+  | { name: "gatewayAdd"; gateway?: string }
+  | { name: "gatewayTest"; gateway?: string }
+  | { name: "gatewayRemove"; gateway?: string; confirmation?: string };
 
 type PostBody = {
   title?: string;
@@ -126,6 +130,15 @@ export function parseBotCommand(text: string): BotCommand | undefined {
   if (lower === "/feishu restart") return { name: "pluginRestart" };
   if (lower === "/feishu autostart") return { name: "autostart" };
   if (lower === "/feishu reset") return { name: "reset" };
+  const gatewayMatch = trimmed.match(/^\/feishu\s+gateway(?:\s+(list|add|test|remove)(?:\s+(.+))?)?$/is);
+  if (gatewayMatch) {
+    const action = (gatewayMatch[1] || "list").toLowerCase();
+    const args = gatewayMatch[2]?.trim().split(/\s+/) || [];
+    if (action === "list") return { name: "gatewayList" };
+    if (action === "test") return { name: "gatewayTest", gateway: args[0] };
+    if (action === "remove") return { name: "gatewayRemove", gateway: args[0], confirmation: args[1] };
+    if (action === "add") return { name: "gatewayAdd", gateway: gatewayMatch[2]?.trim() };
+  }
   const upgradeMatch = trimmed.match(/^\/feishu\s+upgrade(?:\s+(\d+\.\d+\.\d+))?$/i);
   if (upgradeMatch) {
     return { name: "upgrade", version: upgradeMatch[1] };

@@ -31,6 +31,12 @@ export class FeishuMessageHandler {
       debug?: () => string | Promise<string>;
       refresh?: () => string | Promise<string>;
       config?: () => string | Promise<string>;
+      gateway?: {
+        list: () => string | Promise<string>;
+        add: (spec: string) => Promise<string>;
+        test: (name?: string) => Promise<string>;
+        remove: (name?: string, confirmation?: string) => Promise<string>;
+      };
       lifecycle?: {
         start?: () => Promise<string | undefined>;
         stop?: () => Promise<string | undefined>;
@@ -250,6 +256,24 @@ export class FeishuMessageHandler {
 
     if (command.name === "commands") {
       await transport.replyText(msg.messageId, "OMP 自带命令只支持在本机 OMP 终端运行，飞书端不能直接执行，因此不在帮助卡片展示。");
+      return true;
+    }
+
+    if (command.name === "gatewayList" || command.name === "gatewayAdd" || command.name === "gatewayTest" || command.name === "gatewayRemove") {
+      if (!this.diagnostics?.isAdmin?.(msg.senderOpenId)) {
+        await transport.replyText(msg.messageId, `网关管理需要管理员权限。请将你的 Open ID 加入 adminOpenIds：${msg.senderOpenId}`);
+        return true;
+      }
+      try {
+        const gateway = this.diagnostics?.gateway;
+        if (!gateway) throw new Error("网关管理功能尚未加载，请重启飞书服务。");
+        if (command.name === "gatewayList") await transport.replyText(msg.messageId, await gateway.list());
+        if (command.name === "gatewayAdd") await transport.replyText(msg.messageId, await gateway.add(command.gateway || ""));
+        if (command.name === "gatewayTest") await transport.replyText(msg.messageId, await gateway.test(command.gateway));
+        if (command.name === "gatewayRemove") await transport.replyText(msg.messageId, await gateway.remove(command.gateway, command.confirmation));
+      } catch (error) {
+        await transport.replyText(msg.messageId, `网关操作失败：${error instanceof Error ? error.message : String(error)}`);
+      }
       return true;
     }
 

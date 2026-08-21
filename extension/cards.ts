@@ -80,16 +80,20 @@ const HELP_FILL_BUTTONS: Array<{ label: string; draft: string; adminOnly?: boole
   { label: "填入 /workspace", draft: "/workspace " },
   { label: "填入 /send", draft: "/send " },
   { label: "指定版本升/降级", draft: "/feishu upgrade ", adminOnly: true },
+  { label: "添加网关", draft: "/feishu gateway add ", adminOnly: true },
+  { label: "测试网关", draft: "/feishu gateway test ", adminOnly: true },
+  { label: "删除网关（需确认）", draft: "/feishu gateway remove ", adminOnly: true },
   { label: "确认重置插件", draft: "/feishu reset", adminOnly: true },
 ];
 
-const HELP_QUERY_BUTTONS: Array<{ label: string; command: string; type?: string }> = [
+const HELP_QUERY_BUTTONS: Array<{ label: string; command: string; type?: string; adminOnly?: boolean }> = [
   { label: "诊断", command: "doctor" },
   { label: "版本", command: "version" },
   { label: "状态", command: "status" },
-  { label: "配置（管理员）", command: "feishu config" },
-  { label: "日志（管理员）", command: "debug" },
-  { label: "刷新模型（管理员）", command: "refresh" },
+  { label: "配置（管理员）", command: "feishu config", adminOnly: true },
+  { label: "日志（管理员）", command: "debug", adminOnly: true },
+  { label: "刷新模型（管理员）", command: "refresh", adminOnly: true },
+  { label: "网关列表（管理员）", command: "feishu gateway list", adminOnly: true },
 ];
 
 const HELP_ADMIN_BUTTONS: Array<{ label: string; command: string; type?: string }> = [
@@ -110,7 +114,7 @@ const HELP_EFFORT_BUTTONS: Array<{ label: string; command: string; type?: string
   { label: "最高", command: "effort max" },
 ];
 export function buildHelpCard(options: HelpCardOptions) {
-  const queryButtons = HELP_QUERY_BUTTONS.filter((entry) => options.isAdmin || !entry.command.includes("config") && entry.command !== "debug" && entry.command !== "refresh");
+  const queryButtons = HELP_QUERY_BUTTONS.filter((entry) => options.isAdmin || !entry.adminOnly);
   const fillButtons = HELP_FILL_BUTTONS.filter((entry) => options.isAdmin || !entry.adminOnly);
   const adminElements = options.isAdmin
     ? [
