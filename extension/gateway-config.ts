@@ -12,9 +12,9 @@ const API_NAMES = new Set(["openai-completions", "openai-responses", "anthropic-
 type Provider = Record<string, unknown>;
 type ModelsConfig = { providers?: Record<string, Provider>; [key: string]: unknown };
 
-export type GatewaySummary = { name: string; baseUrl: string; api: string; discovery: string; hasApiKey: boolean };
+export type ProviderSummary = { name: string; baseUrl: string; api: string; discovery: string; hasApiKey: boolean };
 
-export function listGateways(): GatewaySummary[] {
+export function listProviders(): ProviderSummary[] {
   const config = readModelsConfig();
   return Object.entries(config.providers || {}).map(([name, provider]) => ({
     name,
@@ -25,7 +25,7 @@ export function listGateways(): GatewaySummary[] {
   }));
 }
 
-export async function addGateway(name: string, baseUrl: string, apiKey: string, api = "openai-completions", modelIds: string[] = []) {
+export async function addProvider(name: string, baseUrl: string, apiKey: string, api = "openai-completions", modelIds: string[] = []) {
   validateName(name);
   const url = validateBaseUrl(baseUrl);
   if (!apiKey.trim()) throw new Error("API Key 不能为空。");
@@ -58,7 +58,7 @@ export async function addGateway(name: string, baseUrl: string, apiKey: string, 
   });
 }
 
-export async function removeGateway(name: string, confirmation?: string) {
+export async function removeProvider(name: string, confirmation?: string) {
   validateName(name);
   if (confirmation?.toLowerCase() !== "confirm") throw new Error("删除网关需要确认：/feishu gateway remove <名称> confirm");
   return updateModelsConfig((config) => {
@@ -70,7 +70,7 @@ export async function removeGateway(name: string, confirmation?: string) {
   });
 }
 
-export async function testGateway(name: string) {
+export async function testProvider(name: string) {
   validateName(name);
   const provider = readModelsConfig().providers?.[name];
   if (!provider) throw new Error(`网关不存在：${name}`);

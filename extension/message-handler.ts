@@ -31,7 +31,7 @@ export class FeishuMessageHandler {
       debug?: () => string | Promise<string>;
       refresh?: () => string | Promise<string>;
       config?: () => string | Promise<string>;
-      gateway?: {
+      provider?: {
         list: () => string | Promise<string>;
         add: (spec: string) => Promise<string>;
         test: (name?: string) => Promise<string>;
@@ -261,20 +261,20 @@ export class FeishuMessageHandler {
       return true;
     }
 
-    if (command.name === "gatewayList" || command.name === "gatewayAdd" || command.name === "gatewayTest" || command.name === "gatewayRemove") {
+    if (command.name === "providerList" || command.name === "providerAdd" || command.name === "providerTest" || command.name === "providerRemove") {
       if (!this.diagnostics?.isAdmin?.(msg.senderOpenId)) {
-        await transport.replyText(msg.messageId, `网关管理需要管理员权限。请将你的 Open ID 加入 adminOpenIds：${msg.senderOpenId}`);
+        await transport.replyText(msg.messageId, `Provider 管理需要管理员权限。请将你的 Open ID 加入 adminOpenIds：${msg.senderOpenId}`);
         return true;
       }
       try {
-        const gateway = this.diagnostics?.gateway;
-        if (!gateway) throw new Error("网关管理功能尚未加载，请重启飞书服务。");
-        if (command.name === "gatewayList") await transport.replyText(msg.messageId, await gateway.list());
-        if (command.name === "gatewayAdd") await transport.replyText(msg.messageId, await gateway.add(command.gateway || ""));
-        if (command.name === "gatewayTest") await transport.replyText(msg.messageId, await gateway.test(command.gateway));
-        if (command.name === "gatewayRemove") await transport.replyText(msg.messageId, await gateway.remove(command.gateway, command.confirmation));
+        const provider = this.diagnostics?.provider;
+        if (!provider) throw new Error("Provider 管理功能尚未加载，请重启飞书服务。");
+        if (command.name === "providerList") await transport.replyText(msg.messageId, await provider.list());
+        if (command.name === "providerAdd") await transport.replyText(msg.messageId, await provider.add(command.provider || ""));
+        if (command.name === "providerTest") await transport.replyText(msg.messageId, await provider.test(command.provider));
+        if (command.name === "providerRemove") await transport.replyText(msg.messageId, await provider.remove(command.provider, command.confirmation));
       } catch (error) {
-        await transport.replyText(msg.messageId, `网关操作失败：${error instanceof Error ? error.message : String(error)}`);
+        await transport.replyText(msg.messageId, `Provider 操作失败：${error instanceof Error ? error.message : String(error)}`);
       }
       return true;
     }

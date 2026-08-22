@@ -26,10 +26,10 @@ export type BotCommand =
   | { name: "autostart" }
   | { name: "skills"; enabled?: string }
   | { name: "reset" }
-  | { name: "gatewayList" }
-  | { name: "gatewayAdd"; gateway?: string }
-  | { name: "gatewayTest"; gateway?: string }
-  | { name: "gatewayRemove"; gateway?: string; confirmation?: string };
+  | { name: "providerList" }
+  | { name: "providerAdd"; provider?: string }
+  | { name: "providerTest"; provider?: string }
+  | { name: "providerRemove"; provider?: string; confirmation?: string };
 
 type PostBody = {
   title?: string;
@@ -133,14 +133,14 @@ export function parseBotCommand(text: string): BotCommand | undefined {
   const skillsMatch = trimmed.match(/^\/feishu\s+skills(?:\s+(on|off))?$/i);
   if (skillsMatch) return { name: "skills", enabled: skillsMatch[1]?.toLowerCase() };
   if (lower === "/feishu reset") return { name: "reset" };
-  const gatewayMatch = trimmed.match(/^\/feishu\s+gateway(?:\s+(list|add|test|remove)(?:\s+(.+))?)?$/is);
-  if (gatewayMatch) {
-    const action = (gatewayMatch[1] || "list").toLowerCase();
-    const args = gatewayMatch[2]?.trim().split(/\s+/) || [];
-    if (action === "list") return { name: "gatewayList" };
-    if (action === "test") return { name: "gatewayTest", gateway: args[0] };
-    if (action === "remove") return { name: "gatewayRemove", gateway: args[0], confirmation: args[1] };
-    if (action === "add") return { name: "gatewayAdd", gateway: gatewayMatch[2]?.trim() };
+  const providerMatch = trimmed.match(/^\/feishu\s+provider(?:\s+(list|add|test|remove)(?:\s+(.+))?)?$/is);
+  if (providerMatch) {
+    const action = (providerMatch[1] || "list").toLowerCase();
+    const args = providerMatch[2]?.trim().split(/\s+/) || [];
+    if (action === "list") return { name: "providerList" };
+    if (action === "test") return { name: "providerTest", provider: args[0] };
+    if (action === "remove") return { name: "providerRemove", provider: args[0], confirmation: args[1] };
+    if (action === "add") return { name: "providerAdd", provider: providerMatch[2]?.trim() };
   }
   const upgradeMatch = trimmed.match(/^\/feishu\s+upgrade(?:\s+(\d+\.\d+\.\d+))?$/i);
   if (upgradeMatch) {

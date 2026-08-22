@@ -18,10 +18,10 @@ bugs here.
 
 - Combines the administrator Skill controls from v0.4.54 with Feishu model
   gateway management from the local branch.
-- Feishu administrators can use `/feishu gateway list|add|test|remove` and
+- Feishu administrators can use `/feishu provider list|add|test|remove` and
   `/feishu skills on|off`; both command families are included in the help card,
   completions, authorization checks, and regression tests.
-- Gateway changes preserve the existing model configuration, enable online
+- Provider changes preserve the existing model configuration, enable online
   discovery, and refresh the active OMP model registry.
 
 ## v0.4.54 highlights
@@ -35,8 +35,8 @@ bugs here.
 - `/feishu refresh` now forces an online model registry refresh instead of only refreshing a prewarmed cache, and reports the resulting model count.
 - The internal OMP model database is refreshed; hand-edited `models.yml` remains untouched.
 - Remaining Feishu-facing fallback labels now use the OMP brand.
-- Feishu administrators can manage multiple OMP model gateways with `/feishu gateway list`, `/feishu gateway add <名称> <baseUrl> <API Key> [api] [modelId...]`, `/feishu gateway test <名称>`, and `/feishu gateway remove <名称> confirm`.
-- OpenAI gateways use OMP's `openai-models-list` discovery. Anthropic gateways use the `anthropic-messages` API and require one or more static model IDs. API keys are never shown in gateway listings.
+- Feishu administrators can manage multiple OMP model providers with `/feishu provider list`, `/feishu provider add <名称> <baseUrl> <API Key> [api] [modelId...]`, `/feishu provider test <名称>`, and `/feishu provider remove <名称> confirm`.
+- OpenAI providers use OMP's `openai-models-list` discovery. Anthropic providers use the `anthropic-messages` API and require one or more static model IDs. API keys are never shown in provider listings.
 
 ## v0.4.52 highlights
 

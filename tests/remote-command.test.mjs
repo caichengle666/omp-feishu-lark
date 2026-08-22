@@ -21,33 +21,33 @@ test("bot parser recognizes status, debug, and refresh commands", () => {
   assert.deepEqual(parseBotCommand("/feishu config"), { name: "config" });
 });
 
-test("bot parser recognizes gateway management commands", () => {
-  assert.deepEqual(parseBotCommand("/feishu gateway"), { name: "gatewayList" });
-  assert.deepEqual(parseBotCommand("/feishu gateway list"), { name: "gatewayList" });
-  assert.deepEqual(parseBotCommand("/feishu gateway add edge https://api.example.test/v1 secret-key openai-completions"), {
-    name: "gatewayAdd",
-    gateway: "edge https://api.example.test/v1 secret-key openai-completions",
+test("bot parser recognizes provider management commands", () => {
+  assert.deepEqual(parseBotCommand("/feishu provider"), { name: "providerList" });
+  assert.deepEqual(parseBotCommand("/feishu provider list"), { name: "providerList" });
+  assert.deepEqual(parseBotCommand("/feishu provider add edge https://api.example.test/v1 secret-key openai-completions"), {
+    name: "providerAdd",
+    provider: "edge https://api.example.test/v1 secret-key openai-completions",
   });
-  assert.deepEqual(parseBotCommand("/feishu gateway test edge"), { name: "gatewayTest", gateway: "edge" });
-  assert.deepEqual(parseBotCommand("/feishu gateway remove edge confirm"), {
-    name: "gatewayRemove",
-    gateway: "edge",
+  assert.deepEqual(parseBotCommand("/feishu provider test edge"), { name: "providerTest", provider: "edge" });
+  assert.deepEqual(parseBotCommand("/feishu provider remove edge confirm"), {
+    name: "providerRemove",
+    provider: "edge",
     confirmation: "confirm",
   });
 });
 
-test("gateway management requires an administrator and forwards parsed arguments", async () => {
+test("provider management requires an administrator and forwards parsed arguments", async () => {
   const replies = [];
   const calls = [];
   const transport = { replyText: async (_messageId, text) => replies.push(text) };
-  const gatewayMessage = { ...message, senderOpenId: "ou_user" };
+  const providerMessage = { ...message, senderOpenId: "ou_user" };
   const denied = new FeishuMessageHandler({}, () => transport, undefined, { isAdmin: () => false });
-  assert.equal(await denied.handleCommand(gatewayMessage, "p2p:ou_user", "/feishu gateway list"), true);
+  assert.equal(await denied.handleCommand(providerMessage, "p2p:ou_user", "/feishu provider list"), true);
   assert.match(replies[0], /管理员权限/);
 
   const allowed = new FeishuMessageHandler({}, () => transport, undefined, {
     isAdmin: () => true,
-    gateway: {
+    provider: {
       list: async () => { calls.push(["list"]); return "gateway list"; },
       add: async (spec) => { calls.push(["add", spec]); return "gateway add"; },
       test: async (name) => { calls.push(["test", name]); return "gateway test"; },
@@ -55,12 +55,12 @@ test("gateway management requires an administrator and forwards parsed arguments
     },
   });
   for (const command of [
-    "/feishu gateway list",
-    "/feishu gateway add edge https://api.example.test secret",
-    "/feishu gateway test edge",
-    "/feishu gateway remove edge confirm",
+    "/feishu provider list",
+    "/feishu provider add edge https://api.example.test secret",
+    "/feishu provider test edge",
+    "/feishu provider remove edge confirm",
   ]) {
-    assert.equal(await allowed.handleCommand(gatewayMessage, "p2p:ou_user", command), true);
+    assert.equal(await allowed.handleCommand(providerMessage, "p2p:ou_user", command), true);
   }
   assert.deepEqual(calls, [
     ["list"],

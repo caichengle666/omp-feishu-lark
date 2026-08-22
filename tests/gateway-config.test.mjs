@@ -8,7 +8,7 @@ process.env.OMP_FEISHU_ROOT = join(root, "feishu");
 process.env.OMP_AGENT_DIR = join(root, "agent");
 process.env.PI_CODING_AGENT_DIR = join(root, "agent");
 
-const { MODELS_PATH, addGateway, listGateways, removeGateway, testGateway } = await import("../extension/gateway-config.ts");
+const { MODELS_PATH, addProvider, listProviders, removeProvider, testProvider } = await import("../extension/gateway-config.ts");
 
 afterEach(() => rmSync(root, { recursive: true, force: true }));
 
@@ -16,7 +16,7 @@ test("add gateway preserves config, enables discovery, and writes a backup", asy
   mkdirSync(join(root, "agent"), { recursive: true });
   writeFileSync(MODELS_PATH, "defaults:\n  contextWindow: 32000\nproviders:\n  old:\n    baseUrl: https://old.example/v1\n    apiKey: old-secret\n    models: []\n", "utf8");
 
-  await addGateway("edge", "https://api.example.test/v1/", "new-secret");
+  await addProvider("edge", "https://api.example.test/v1/", "new-secret");
 
   const config = Bun.YAML.parse(readFileSync(MODELS_PATH, "utf8"));
   assert.equal(config.defaults.contextWindow, 32000);
@@ -26,15 +26,15 @@ test("add gateway preserves config, enables discovery, and writes a backup", asy
   assert.deepEqual(config.providers.edge.discovery, { type: "openai-models-list", timeoutMs: 15000 });
   assert.equal(config.providers.edge.apiKey, "new-secret");
   assert.equal(existsSync(`${MODELS_PATH}.bak-feishu`), true);
-  assert.doesNotMatch(JSON.stringify(listGateways()), /new-secret/);
+  assert.doesNotMatch(JSON.stringify(listProviders()), /new-secret/);
 });
 
 test("remove gateway requires confirmation and preserves other providers", async () => {
   mkdirSync(join(root, "agent"), { recursive: true });
   writeFileSync(MODELS_PATH, "providers:\n  edge:\n    baseUrl: https://api.example.test/v1\n    apiKey: secret\n  keep:\n    baseUrl: https://keep.example/v1\n", "utf8");
 
-  await assert.rejects(removeGateway("edge"), /需要确认/);
-  await removeGateway("edge", "confirm");
+  await assert.rejects(removeProvider("edge"), /需要确认/);
+  await removeProvider("edge", "confirm");
   const config = Bun.YAML.parse(readFileSync(MODELS_PATH, "utf8"));
   assert.equal(config.providers.edge, undefined);
   assert.equal(config.providers.keep.baseUrl, "https://keep.example/v1");
@@ -52,7 +52,7 @@ test("test gateway sends bearer auth to the real models endpoint", async () => {
   try {
     mkdirSync(join(root, "agent"), { recursive: true });
     writeFileSync(MODELS_PATH, Bun.YAML.stringify({ providers: { local: { baseUrl: `http://127.0.0.1:${server.port}/v1`, apiKey: "test-secret" } } }), "utf8");
-    const result = await testGateway("local");
+    const result = await testProvider("local");
     assert.equal(result.status, 200);
     assert.equal(result.modelCount, 2);
   } finally {
@@ -61,17 +61,17 @@ test("test gateway sends bearer auth to the real models endpoint", async () => {
 });
 
 test("gateway validation rejects unsafe names, URLs, and APIs", async () => {
-  await assert.rejects(addGateway("bad name", "https://api.example.test", "secret"), /网关名称/);
-  await assert.rejects(addGateway("edge", "file:///tmp/models", "secret"), /只支持 http/);
-  await assert.rejects(addGateway("edge", "https://api.example.test", "secret", "unknown-api"), /不支持的 API/);
-  await assert.rejects(addGateway("edge", "https://user:pass@example.test", "secret"), /用户名/);
-  await assert.rejects(addGateway("edge", "https://api.example.test?token=x", "secret"), /查询参数/);
-  await assert.rejects(addGateway("edge", "https://api.example.test/#secret", "secret"), /片段/);
+  await assert.rejects(addProvider("bad name", "https://api.example.test", "secret"), /网关名称/);
+  await assert.rejects(addProvider("edge", "file:///tmp/models", "secret"), /只支持 http/);
+  await assert.rejects(addProvider("edge", "https://api.example.test", "secret", "unknown-api"), /不支持的 API/);
+  await assert.rejects(addProvider("edge", "https://user:pass@example.test", "secret"), /用户名/);
+  await assert.rejects(addProvider("edge", "https://api.example.test?token=x", "secret"), /查询参数/);
+  await assert.rejects(addProvider("edge", "https://api.example.test/#secret", "secret"), /片段/);
 });
 
 test("anthropic gateway stores static models and skips discovery", async () => {
   mkdirSync(join(root, "agent"), { recursive: true });
-  await addGateway("claude", "https://api.example.test", "secret", "anthropic-messages", ["claude-sonnet-4-20250514", "claude-sonnet-4-20250514"]);
+  await addProvider("claude", "https://api.example.test", "secret", "anthropic-messages", ["claude-sonnet-4-20250514", "claude-sonnet-4-20250514"]);
   const config = Bun.YAML.parse(readFileSync(MODELS_PATH, "utf8"));
   assert.equal(config.providers.claude.api, "anthropic-messages");
   assert.equal(config.providers.claude.discovery, undefined);
@@ -81,9 +81,9 @@ test("anthropic gateway stores static models and skips discovery", async () => {
 test("anthropic gateway requires a model and test only checks configuration", async () => {
   mkdirSync(join(root, "agent"), { recursive: true });
   const name = `claude-${process.pid}-${Date.now()}`;
-  await assert.rejects(addGateway(name, "https://127.0.0.1:1", "secret", "anthropic-messages"), /至少一个模型 ID/);
-  await addGateway(name, "https://127.0.0.1:1", "secret", "anthropic-messages", ["claude-opus-4-1"]);
-  const result = await testGateway(name);
+  await assert.rejects(addProvider(name, "https://127.0.0.1:1", "secret", "anthropic-messages"), /至少一个模型 ID/);
+  await addProvider(name, "https://127.0.0.1:1", "secret", "anthropic-messages", ["claude-opus-4-1"]);
+  const result = await testProvider(name);
   assert.equal(result.status, "configured");
   assert.equal(result.modelCount, 1);
 });
@@ -91,8 +91,8 @@ test("anthropic gateway requires a model and test only checks configuration", as
 test("concurrent gateway updates preserve both providers", async () => {
   mkdirSync(join(root, "agent"), { recursive: true });
   await Promise.all([
-    addGateway("one", "https://one.example.test", "secret"),
-    addGateway("two", "https://two.example.test", "secret"),
+    addProvider("one", "https://one.example.test", "secret"),
+    addProvider("two", "https://two.example.test", "secret"),
   ]);
   const config = Bun.YAML.parse(readFileSync(MODELS_PATH, "utf8"));
   assert.equal(config.providers.one.baseUrl, "https://one.example.test");

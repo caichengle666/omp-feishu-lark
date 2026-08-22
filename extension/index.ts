@@ -21,7 +21,7 @@ import { feishuHelpText } from "./help.js";
 import { FeishuNotificationWebhook } from "./notification-webhook.js";
 import { acquireFileLease, acquireGatewayLock, gatewayLockPath, readGatewayOwner, releaseFileLease, type GatewayLockHandle, type GatewayOwner } from "./gateway-lock.js";
 import { FeishuMessageHandler } from "./message-handler.js";
-import { addGateway, listGateways, removeGateway, testGateway } from "./gateway-config.js";
+import { addProvider, listProviders, removeProvider, testProvider } from "./gateway-config.js";
 import { runSetup, uiConfirm } from "./setup.js";
 import { buildTaskStatusCard, parseStopTaskActionValue } from "./task-status-card.js";
 import { bunDnsArgs, compareVersions, registryNetworkAttempts, resolveTargetVersion, resolveUpgradeNetworkPolicy, upgradeNetworkAttempts, upgradeTimeoutMs } from "./upgrade.js";
@@ -82,11 +82,11 @@ export default function feishuExtension(pi: ExtensionAPI) {
     debug: () => debugReport(),
     refresh: () => refreshReport(),
     config: () => configReport(),
-    gateway: {
-      list: () => gatewayListReport(),
-      add: (spec) => gatewayAddReport(spec),
-      test: (name) => gatewayTestReport(name),
-      remove: (name, confirmation) => gatewayRemoveReport(name, confirmation),
+    provider: {
+      list: () => providerListReport(),
+      add: (spec) => providerAddReport(spec),
+      test: (name) => providerTestReport(name),
+      remove: (name, confirmation) => providerRemoveReport(name, confirmation),
     },
     lifecycle: {
       start: () => remoteLifecycleStart(),
@@ -165,36 +165,36 @@ export default function feishuExtension(pi: ExtensionAPI) {
     return [`模型列表已刷新，当前可用 ${models.length} 个。`, `Owner: ${formatOwner(owner)}`, `Log: ${DAEMON_LOG_PATH}`].join("\n");
   }
 
-  function gatewayListReport() {
-    const gateways = listGateways();
-    if (!gateways.length) return "当前没有配置网关。";
+  function providerListReport() {
+    const providers = listProviders();
+    if (!providers.length) return "当前没有配置 Provider。";
     return [
-      "当前网关：",
-      ...gateways.map((gateway) => `${gateway.name} | ${gateway.baseUrl} | API=${gateway.api} | discovery=${gateway.discovery} | key=${gateway.hasApiKey ? "已配置" : "未配置"}`),
+      "当前 Provider：",
+      ...providers.map((provider) => `${provider.name} | ${provider.baseUrl} | API=${provider.api} | discovery=${provider.discovery} | key=${provider.hasApiKey ? "已配置" : "未配置"}`),
     ].join("\n");
   }
 
-  async function gatewayAddReport(spec: string) {
+  async function providerAddReport(spec: string) {
     const [name, baseUrl, apiKey, api = "openai-completions", ...modelIds] = spec.trim().split(/\s+/);
     if (!name || !baseUrl || !apiKey) throw new Error("用法：/feishu gateway add <名称> <baseUrl> <API Key> [api] [modelId...]");
-    const result = await addGateway(name, baseUrl, apiKey, api, modelIds);
+    const result = await addProvider(name, baseUrl, apiKey, api, modelIds);
     await conversations.refreshModels();
-    return `网关 ${result.name} 已${result.replaced ? "更新" : "添加"}。模型列表已刷新。`;
+    return `Provider ${result.name} 已${result.replaced ? "更新" : "添加"}。模型列表已刷新。`;
   }
 
-  async function gatewayTestReport(name?: string) {
-    if (!name) throw new Error("用法：/feishu gateway test <名称>");
-    const result = await testGateway(name);
+  async function providerTestReport(name?: string) {
+    if (!name) throw new Error("用法：/feishu provider test <名称>");
+    const result = await testProvider(name);
     return result.status === "configured"
-      ? `网关 ${result.name} 已配置，静态模型 ${result.modelCount} 个。`
-      : `网关 ${result.name} 连通，HTTP ${result.status}，发现 ${result.modelCount} 个模型。`;
+      ? `Provider ${result.name} 已配置，静态模型 ${result.modelCount} 个。`
+      : `Provider ${result.name} 连通，HTTP ${result.status}，发现 ${result.modelCount} 个模型。`;
   }
 
-  async function gatewayRemoveReport(name?: string, confirmation?: string) {
-    if (!name) throw new Error("用法：/feishu gateway remove <名称> confirm");
-    const removed = await removeGateway(name, confirmation);
+  async function providerRemoveReport(name?: string, confirmation?: string) {
+    if (!name) throw new Error("用法：/feishu provider remove <名称> confirm");
+    const removed = await removeProvider(name, confirmation);
     await conversations.refreshModels();
-    return `网关 ${removed} 已删除，模型列表已刷新。`;
+    return `Provider ${removed} 已删除，模型列表已刷新。`;
   }
 
   function debugReport() {
@@ -1013,7 +1013,7 @@ async function upgradeDaemon(targetVersion: string, noticeTarget?: NoticeTarget,
   pi.registerCommand("feishu", {
     description: "Feishu/Lark: help, setup, start, stop, restart, refresh, status, config, doctor, version, debug, autostart, skills, upgrade, reset",
     getArgumentCompletions: (prefix) => {
-      const commands = ["help", "setup", "start", "stop", "restart", "refresh", "status", "config", "doctor", "version", "debug", "autostart", "skills", "upgrade", "gateway", "reset"];
+      const commands = ["help", "setup", "start", "stop", "restart", "refresh", "status", "config", "doctor", "version", "debug", "autostart", "skills", "upgrade", "provider", "reset"];
       const query = prefix.trim().toLowerCase();
       return commands
         .filter((command) => command.startsWith(query))
@@ -1024,26 +1024,26 @@ async function upgradeDaemon(targetVersion: string, noticeTarget?: NoticeTarget,
       const [cmdRaw] = args.trim().toLowerCase().split(/\s+/, 1);
       const cmd = cmdRaw || "status";
       try {
-        if (cmd === "gateway") {
-          const gatewayArgs = args.trim().split(/\s+/).slice(1);
-          const action = (gatewayArgs.shift() || "list").toLowerCase();
+        if (cmd === "provider") {
+          const providerArgs = args.trim().split(/\s+/).slice(1);
+          const action = (providerArgs.shift() || "list").toLowerCase();
           if (action === "list") {
-            ctx.ui.notify(gatewayListReport(), "info");
+            ctx.ui.notify(providerListReport(), "info");
             return;
           }
           if (action === "add") {
-            ctx.ui.notify(await gatewayAddReport(gatewayArgs.join(" ")), "info");
+            ctx.ui.notify(await providerAddReport(providerArgs.join(" ")), "info");
             return;
           }
           if (action === "test") {
-            ctx.ui.notify(await gatewayTestReport(gatewayArgs[0]), "info");
+            ctx.ui.notify(await providerTestReport(providerArgs[0]), "info");
             return;
           }
           if (action === "remove") {
-            ctx.ui.notify(await gatewayRemoveReport(gatewayArgs[0], gatewayArgs[1]), "info");
+            ctx.ui.notify(await providerRemoveReport(providerArgs[0], providerArgs[1]), "info");
             return;
           }
-          ctx.ui.notify("用法：/feishu gateway list|add|test|remove", "info");
+          ctx.ui.notify("用法：/feishu provider list|add|test|remove", "info");
           return;
         }
         if (cmd === "help") {
