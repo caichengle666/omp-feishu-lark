@@ -14,6 +14,16 @@ All credit for the plugin itself goes to the upstream author. Bugs in the
 patches are not upstream's problem; report plugin bugs upstream and packaging
 bugs here.
 
+## v0.4.55 highlights
+
+- Combines the administrator Skill controls from v0.4.54 with Feishu model
+  gateway management from the local branch.
+- Feishu administrators can use `/feishu gateway list|add|test|remove` and
+  `/feishu skills on|off`; both command families are included in the help card,
+  completions, authorization checks, and regression tests.
+- Gateway changes preserve the existing model configuration, enable online
+  discovery, and refresh the active OMP model registry.
+
 ## v0.4.54 highlights
 
 - Help cards now provide administrator-only Skill on/off buttons.
