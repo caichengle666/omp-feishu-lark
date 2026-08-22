@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { buildOmpLaunchArgs } from "./daemon-spec.js";
 
 type OmpApprovalMode = "always-ask" | "write" | "yolo";
 
@@ -27,7 +28,7 @@ export async function verifyRpcWorkerReady(options: RpcSelfTestOptions): Promise
     "--no-extensions",
     "--allow-home",
     "--cwd", options.workspace,
-    ...buildLaunchArgs(options.ompLaunch),
+    ...buildOmpLaunchArgs(options.ompLaunch),
   ];
   const child = spawn(options.bunBin, args, {
     cwd: options.workspace,
@@ -82,16 +83,4 @@ export async function verifyRpcWorkerReady(options: RpcSelfTestOptions): Promise
   } finally {
     await finish();
   }
-}
-
-function buildLaunchArgs(launch?: RpcSelfTestOmpLaunch) {
-  const args: string[] = [];
-  if (!launch?.enableSkills) args.push("--no-skills");
-  if (launch?.skills?.length) args.push("--skills", launch.skills.join(","));
-  if (launch?.tools?.length) args.push("--tools", launch.tools.join(","));
-  if (launch?.approvalMode) args.push("--approval-mode", launch.approvalMode);
-  if (launch?.maxTime) args.push("--max-time", launch.maxTime);
-  if (launch?.appendSystemPrompt) args.push("--append-system-prompt", launch.appendSystemPrompt);
-  for (const dir of launch?.addDirs || []) args.push("--add-dir", dir);
-  return args;
 }

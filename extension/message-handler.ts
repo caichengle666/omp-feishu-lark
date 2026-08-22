@@ -42,6 +42,7 @@ export class FeishuMessageHandler {
         stop?: () => Promise<string | undefined>;
         restart?: (target?: { chatId: string; messageId: string; sessionKey: string; chatType: string }) => Promise<string | undefined>;
         autostart?: () => Promise<string | undefined>;
+        skills?: (enabled: boolean, target?: { chatId: string; messageId: string; sessionKey: string; chatType: string }) => Promise<string | undefined>;
         reset?: () => Promise<string | undefined>;
       };
     },
@@ -285,12 +286,18 @@ export class FeishuMessageHandler {
       return true;
     }
 
-    if (command.name === "pluginStart" || command.name === "pluginStop" || command.name === "pluginRestart" || command.name === "autostart" || command.name === "reset") {
-      const lifecycleName: "start" | "stop" | "restart" | "autostart" | "reset" =
+    if (command.name === "pluginStart" || command.name === "pluginStop" || command.name === "pluginRestart" || command.name === "autostart" || command.name === "skills" || command.name === "reset") {
+      const skillsEnabled = command.name === "skills" ? command.enabled : undefined;
+      if (command.name === "skills" && !skillsEnabled) {
+        await transport.replyText(msg.messageId, "用法：/feishu skills on 或 /feishu skills off");
+        return true;
+      }
+      const lifecycleName: "start" | "stop" | "restart" | "autostart" | "skills" | "reset" =
         command.name === "pluginStart" ? "start"
         : command.name === "pluginStop" ? "stop"
         : command.name === "pluginRestart" ? "restart"
         : command.name === "autostart" ? "autostart"
+        : command.name === "skills" ? "skills"
         : "reset";
       if (!this.diagnostics?.isAdmin?.(msg.senderOpenId)) {
         await transport.replyText(
@@ -308,6 +315,13 @@ export class FeishuMessageHandler {
               sessionKey: key,
               chatType: msg.chatType,
             })
+          : lifecycleName === "skills"
+            ? await this.diagnostics?.lifecycle?.skills?.(skillsEnabled === "on", {
+                chatId: msg.chatId,
+                messageId: msg.messageId,
+                sessionKey: key,
+                chatType: msg.chatType,
+              })
           : await this.diagnostics?.lifecycle?.[lifecycleName]?.();
         if (report && transport.isRunning?.() !== false) await transport.replyText(msg.messageId, report);
       } catch (error) {

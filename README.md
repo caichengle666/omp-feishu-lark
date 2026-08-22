@@ -14,6 +14,12 @@ All credit for the plugin itself goes to the upstream author. Bugs in the
 patches are not upstream's problem; report plugin bugs upstream and packaging
 bugs here.
 
+## v0.4.54 highlights
+
+- Help cards now provide administrator-only Skill on/off buttons.
+- `/feishu skills on|off` persists the setting and restarts the daemon so new RPC workers apply it.
+- RPC workers now inherit the configured OMP Skill, tool, approval, timeout, prompt, and directory policy.
+
 ## v0.4.53 highlights
 
 - `/feishu refresh` now forces an online model registry refresh instead of only refreshing a prewarmed cache, and reports the resulting model count.
@@ -233,8 +239,8 @@ remote OMP workers need a non-default tool or skill policy:
 
 `approvalMode` accepts `always-ask`, `write`, or `yolo`. `maxTime` accepts a
 number with an optional `s`, `m`, or `h` suffix. Skills remain disabled by
-default; set `enableSkills` to `true` to omit the daemon's default
-`--no-skills` flag.
+default; a non-empty `skills` list enables them automatically. Set
+`enableSkills` to `false` to explicitly keep skills disabled.
 
 Environment-only configurations can use `FEISHU_OMP_ENABLE_SKILLS`,
 `FEISHU_OMP_SKILLS`, `FEISHU_OMP_TOOLS`, `FEISHU_OMP_APPROVAL_MODE`,

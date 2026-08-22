@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { join } from "node:path";
 import test from "node:test";
-import { buildDaemonSpec } from "../src/daemon-spec.ts";
+import { buildDaemonSpec, buildOmpLaunchArgs } from "../src/daemon-spec.ts";
 import { normalizeOmpLaunch } from "../extension/config.ts";
 
 const baseInput = {
@@ -74,4 +74,29 @@ test("normalizeOmpLaunch accepts valid fields and drops invalid ones", () => {
 
 test("normalizeOmpLaunch treats an empty object as unset", () => {
   assert.equal(normalizeOmpLaunch({}), undefined);
+});
+
+test("a configured skill list enables skills unless explicitly disabled", () => {
+  assert.equal(normalizeOmpLaunch({ skills: ["git-*"] })?.enableSkills, true);
+  assert.deepEqual(buildOmpLaunchArgs({ enableSkills: false, skills: ["git-*"] }), ["--no-skills"]);
+});
+
+test("RPC and daemon launch share the same OMP policy arguments", () => {
+  const launch = {
+    enableSkills: true,
+    skills: ["git-*"],
+    tools: ["read", "bash"],
+    approvalMode: "write",
+    maxTime: "30m",
+    appendSystemPrompt: "keep tests green",
+    addDirs: ["/srv/project"],
+  };
+  assert.deepEqual(buildOmpLaunchArgs(launch), [
+    "--skills", "git-*",
+    "--tools", "read,bash",
+    "--approval-mode", "write",
+    "--max-time", "30m",
+    "--append-system-prompt", "keep tests green",
+    "--add-dir", "/srv/project",
+  ]);
 });

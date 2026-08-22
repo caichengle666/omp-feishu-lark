@@ -24,6 +24,7 @@ export type BotCommand =
   | { name: "pluginStop" }
   | { name: "pluginRestart" }
   | { name: "autostart" }
+  | { name: "skills"; enabled?: string }
   | { name: "reset" }
   | { name: "gatewayList" }
   | { name: "gatewayAdd"; gateway?: string }
@@ -129,6 +130,8 @@ export function parseBotCommand(text: string): BotCommand | undefined {
   if (lower === "/feishu stop") return { name: "pluginStop" };
   if (lower === "/feishu restart") return { name: "pluginRestart" };
   if (lower === "/feishu autostart") return { name: "autostart" };
+  const skillsMatch = trimmed.match(/^\/feishu\s+skills(?:\s+(on|off))?$/i);
+  if (skillsMatch) return { name: "skills", enabled: skillsMatch[1]?.toLowerCase() };
   if (lower === "/feishu reset") return { name: "reset" };
   const gatewayMatch = trimmed.match(/^\/feishu\s+gateway(?:\s+(list|add|test|remove)(?:\s+(.+))?)?$/is);
   if (gatewayMatch) {

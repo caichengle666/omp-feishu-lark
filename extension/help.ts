@@ -8,8 +8,8 @@ export type OmpCommandInfo = {
 
 export function feishuHelpText(ompCommands?: ReadonlyArray<OmpCommandInfo>) {
   const lines = [
-    "插件管理命令（OMP 中运行；管理员也可在飞书执行 start、stop、restart、autostart、reset）：",
-    "管理员可在飞书发送：/feishu start、/feishu stop、/feishu restart、/feishu autostart、/feishu reset",
+    "插件管理命令（OMP 中运行；管理员也可在飞书执行 start、stop、restart、autostart、skills、reset）：",
+    "管理员可在飞书发送：/feishu start、/feishu stop、/feishu restart、/feishu autostart、/feishu skills on|off、/feishu reset",
     "/feishu setup - 配置飞书应用（需要 OMP 终端交互，飞书端不能执行）",
     "/feishu start - 启动飞书连接",
     "/feishu stop - 停止飞书连接",

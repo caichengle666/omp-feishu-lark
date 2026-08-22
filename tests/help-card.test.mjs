@@ -29,6 +29,8 @@ test("help card uses JSON 2.0 with run, fill, and submit actions", () => {
   assert.match(raw, /测试网关/);
   assert.match(raw, /删除网关（需确认）/);
   assert.match(raw, /确认重置插件/);
+  assert.match(raw, /Skill 开启/);
+  assert.match(raw, /Skill 关闭/);
   assert.doesNotMatch(raw, /\/review/);
   assert.match(raw, /OMP 自带斜杠命令/);
 });
@@ -41,6 +43,8 @@ test("non-admin help cards hide administrator-only actions", () => {
   assert.doesNotMatch(raw, /刷新模型（管理员）/);
   assert.doesNotMatch(raw, /添加网关/);
   assert.doesNotMatch(raw, /网关列表（管理员）/);
+  assert.doesNotMatch(raw, /Skill 开启/);
+  assert.doesNotMatch(raw, /Skill 关闭/);
   assert.match(raw, /诊断/);
   assert.match(raw, /版本/);
   assert.match(raw, /状态/);
