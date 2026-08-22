@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync, readdirSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -11,6 +11,7 @@ const extensionPath = join(repoRoot, "extension", "index.ts");
 const conversationManagerPath = join(repoRoot, "extension", "conversation-manager.ts");
 
 test("compiles against the OMP 17 extension boundary", () => {
+  const outputPath = join(repoRoot, `.test-extension-build-${process.pid}.js`);
   const result = spawnSync(process.execPath, [
     "build",
     "--target=bun",
@@ -20,13 +21,14 @@ test("compiles against the OMP 17 extension boundary", () => {
     "@larksuiteoapi/node-sdk",
     "--external",
     "qrcode-terminal",
-    "--outfile=/dev/null",
+    `--outfile=${outputPath}`,
     extensionPath,
   ], {
     cwd: repoRoot,
     encoding: "utf8",
     timeout: 30_000,
   });
+  rmSync(outputPath, { force: true });
 
   const output = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
   assert.equal(result.status, 0, output || `bun exited via ${result.signal || "unknown signal"}`);

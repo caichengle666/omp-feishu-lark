@@ -35,8 +35,8 @@ bugs here.
 - `/feishu refresh` now forces an online model registry refresh instead of only refreshing a prewarmed cache, and reports the resulting model count.
 - The internal OMP model database is refreshed; hand-edited `models.yml` remains untouched.
 - Remaining Feishu-facing fallback labels now use the OMP brand.
-- Feishu administrators can manage multiple OMP model gateways with `/feishu gateway list`, `/feishu gateway add <名称> <baseUrl> <API Key> [api]`, `/feishu gateway test <名称>`, and `/feishu gateway remove <名称> confirm`.
-- Added or updated gateways use OMP's `openai-models-list` discovery and refresh the model registry after changes. API keys are never shown in gateway listings.
+- Feishu administrators can manage multiple OMP model gateways with `/feishu gateway list`, `/feishu gateway add <名称> <baseUrl> <API Key> [api] [modelId...]`, `/feishu gateway test <名称>`, and `/feishu gateway remove <名称> confirm`.
+- OpenAI gateways use OMP's `openai-models-list` discovery. Anthropic gateways use the `anthropic-messages` API and require one or more static model IDs. API keys are never shown in gateway listings.
 
 ## v0.4.52 highlights
 

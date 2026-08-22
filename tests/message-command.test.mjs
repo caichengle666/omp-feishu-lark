@@ -38,6 +38,18 @@ test("skills lifecycle commands require admin and restart with the selected stat
   assert.match(replies.at(-1), /用法/);
 });
 
+test("skills without a value reports the current state to administrators", async () => {
+  const replies = [];
+  const transport = { replyText: async (_messageId, text) => { replies.push(text); } };
+  const handler = new FeishuMessageHandler({}, () => transport, undefined, {
+    isAdmin: () => true,
+    lifecycle: { skillsStatus: async () => "OMP Skill：已开启" },
+  });
+  const message = { messageId: "om_skills_status", chatId: "oc_chat", chatType: "p2p", senderOpenId: "ou_admin", msgType: "text", content: "" };
+  assert.equal(await handler.handleCommand(message, "p2p:ou_admin", "/feishu skills"), true);
+  assert.deepEqual(replies, ["OMP Skill：已开启"]);
+});
+
 test("bot parser recognizes /effort with or without a level", () => {
   assert.deepEqual(parseBotCommand("/effort"), { name: "effort", level: undefined });
   assert.deepEqual(parseBotCommand("/effort high"), { name: "effort", level: "high" });

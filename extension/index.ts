@@ -94,6 +94,7 @@ export default function feishuExtension(pi: ExtensionAPI) {
       restart: (target?: NoticeTarget) => remoteLifecycleRestart(target),
       autostart: () => remoteLifecycleAutostart(),
       skills: (enabled, target) => remoteLifecycleSkills(enabled, target),
+      skillsStatus: () => skillsReport(),
       reset: () => remoteLifecycleReset(),
     },
   });
@@ -174,17 +175,19 @@ export default function feishuExtension(pi: ExtensionAPI) {
   }
 
   async function gatewayAddReport(spec: string) {
-    const [name, baseUrl, apiKey, api] = spec.trim().split(/\s+/);
-    if (!name || !baseUrl || !apiKey) throw new Error("用法：/feishu gateway add <名称> <baseUrl> <API Key> [api]");
-    const result = await addGateway(name, baseUrl, apiKey, api || "openai-completions");
+    const [name, baseUrl, apiKey, api = "openai-completions", ...modelIds] = spec.trim().split(/\s+/);
+    if (!name || !baseUrl || !apiKey) throw new Error("用法：/feishu gateway add <名称> <baseUrl> <API Key> [api] [modelId...]");
+    const result = await addGateway(name, baseUrl, apiKey, api, modelIds);
     await conversations.refreshModels();
-    return `网关 ${result.name} 已${result.replaced ? "更新" : "添加"}，已启用在线模型发现。模型列表已刷新。`;
+    return `网关 ${result.name} 已${result.replaced ? "更新" : "添加"}。模型列表已刷新。`;
   }
 
   async function gatewayTestReport(name?: string) {
     if (!name) throw new Error("用法：/feishu gateway test <名称>");
     const result = await testGateway(name);
-    return `网关 ${result.name} 连通，HTTP ${result.status}，发现 ${result.modelCount} 个模型。`;
+    return result.status === "configured"
+      ? `网关 ${result.name} 已配置，静态模型 ${result.modelCount} 个。`
+      : `网关 ${result.name} 连通，HTTP ${result.status}，发现 ${result.modelCount} 个模型。`;
   }
 
   async function gatewayRemoveReport(name?: string, confirmation?: string) {
@@ -211,9 +214,22 @@ export default function feishuExtension(pi: ExtensionAPI) {
       `Group policy: ${cfg.groupPolicy}`,
       `Admins: ${(cfg.adminOpenIds || []).join(", ") || "none"}`,
       `Auto start: ${cfg.autoStart !== false ? "on" : "off"}`,
+      `OMP skills: ${cfg.ompLaunch?.enableSkills === true ? "on" : "off"}${cfg.ompLaunch?.skills?.length ? ` (${cfg.ompLaunch.skills.join(", ")})` : ""}`,
       `Prompt notice: ${cfg.promptNotifySec || 0}s`,
       `Notification webhook: ${cfg.notificationWebhookEnabled ? "enabled" : "disabled"}`,
       `Config path: ${CONFIG_PATH}`,
+    ].join("\n");
+  }
+
+  function skillsReport() {
+    const cfg = loadConfig();
+    if (!cfg) return "配置不存在。请运行 /feishu setup。";
+    const launch = cfg.ompLaunch;
+    const enabled = launch?.enableSkills === true;
+    return [
+      `OMP Skill：${enabled ? "已开启" : "已关闭"}`,
+      `Skill 范围：${launch?.skills?.length ? launch.skills.join(", ") : enabled ? "OMP 默认 Skill" : "未加载"}`,
+      "修改后会自动重启 Feishu daemon，并应用到新的 RPC worker。",
     ].join("\n");
   }
 

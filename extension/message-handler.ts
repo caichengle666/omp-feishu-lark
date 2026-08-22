@@ -43,6 +43,7 @@ export class FeishuMessageHandler {
         restart?: (target?: { chatId: string; messageId: string; sessionKey: string; chatType: string }) => Promise<string | undefined>;
         autostart?: () => Promise<string | undefined>;
         skills?: (enabled: boolean, target?: { chatId: string; messageId: string; sessionKey: string; chatType: string }) => Promise<string | undefined>;
+        skillsStatus?: () => string | Promise<string>;
         reset?: () => Promise<string | undefined>;
       };
     },
@@ -289,7 +290,12 @@ export class FeishuMessageHandler {
     if (command.name === "pluginStart" || command.name === "pluginStop" || command.name === "pluginRestart" || command.name === "autostart" || command.name === "skills" || command.name === "reset") {
       const skillsEnabled = command.name === "skills" ? command.enabled : undefined;
       if (command.name === "skills" && !skillsEnabled) {
-        await transport.replyText(msg.messageId, "用法：/feishu skills on 或 /feishu skills off");
+        if (!this.diagnostics?.isAdmin?.(msg.senderOpenId)) {
+          await transport.replyText(msg.messageId, `无权查看 Skill 状态。请将你的 Open ID 加入 adminOpenIds：${msg.senderOpenId}`);
+          return true;
+        }
+        const report = await this.diagnostics?.lifecycle?.skillsStatus?.();
+        await transport.replyText(msg.messageId, report || "Skill 状态暂不可用，请运行 /feishu doctor。\n用法：/feishu skills on 或 /feishu skills off");
         return true;
       }
       const lifecycleName: "start" | "stop" | "restart" | "autostart" | "skills" | "reset" =

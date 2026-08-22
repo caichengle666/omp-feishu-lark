@@ -64,4 +64,37 @@ test("gateway validation rejects unsafe names, URLs, and APIs", async () => {
   await assert.rejects(addGateway("bad name", "https://api.example.test", "secret"), /网关名称/);
   await assert.rejects(addGateway("edge", "file:///tmp/models", "secret"), /只支持 http/);
   await assert.rejects(addGateway("edge", "https://api.example.test", "secret", "unknown-api"), /不支持的 API/);
+  await assert.rejects(addGateway("edge", "https://user:pass@example.test", "secret"), /用户名/);
+  await assert.rejects(addGateway("edge", "https://api.example.test?token=x", "secret"), /查询参数/);
+  await assert.rejects(addGateway("edge", "https://api.example.test/#secret", "secret"), /片段/);
+});
+
+test("anthropic gateway stores static models and skips discovery", async () => {
+  mkdirSync(join(root, "agent"), { recursive: true });
+  await addGateway("claude", "https://api.example.test", "secret", "anthropic-messages", ["claude-sonnet-4-20250514", "claude-sonnet-4-20250514"]);
+  const config = Bun.YAML.parse(readFileSync(MODELS_PATH, "utf8"));
+  assert.equal(config.providers.claude.api, "anthropic-messages");
+  assert.equal(config.providers.claude.discovery, undefined);
+  assert.deepEqual(config.providers.claude.models, [{ id: "claude-sonnet-4-20250514", name: "claude-sonnet-4-20250514", api: "anthropic-messages" }]);
+});
+
+test("anthropic gateway requires a model and test only checks configuration", async () => {
+  mkdirSync(join(root, "agent"), { recursive: true });
+  const name = `claude-${process.pid}-${Date.now()}`;
+  await assert.rejects(addGateway(name, "https://127.0.0.1:1", "secret", "anthropic-messages"), /至少一个模型 ID/);
+  await addGateway(name, "https://127.0.0.1:1", "secret", "anthropic-messages", ["claude-opus-4-1"]);
+  const result = await testGateway(name);
+  assert.equal(result.status, "configured");
+  assert.equal(result.modelCount, 1);
+});
+
+test("concurrent gateway updates preserve both providers", async () => {
+  mkdirSync(join(root, "agent"), { recursive: true });
+  await Promise.all([
+    addGateway("one", "https://one.example.test", "secret"),
+    addGateway("two", "https://two.example.test", "secret"),
+  ]);
+  const config = Bun.YAML.parse(readFileSync(MODELS_PATH, "utf8"));
+  assert.equal(config.providers.one.baseUrl, "https://one.example.test");
+  assert.equal(config.providers.two.baseUrl, "https://two.example.test");
 });

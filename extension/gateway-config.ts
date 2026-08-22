@@ -25,49 +25,67 @@ export function listGateways(): GatewaySummary[] {
   }));
 }
 
-export async function addGateway(name: string, baseUrl: string, apiKey: string, api = "openai-completions") {
+export async function addGateway(name: string, baseUrl: string, apiKey: string, api = "openai-completions", modelIds: string[] = []) {
   validateName(name);
   const url = validateBaseUrl(baseUrl);
   if (!apiKey.trim()) throw new Error("API Key 不能为空。");
   if (!API_NAMES.has(api)) throw new Error(`不支持的 API：${api}`);
-  const config = readModelsConfig();
-  const providers = config.providers || {};
-  const previous = providers[name];
-  providers[name] = {
-    ...(previous || {}),
-    baseUrl: url,
-    apiKey: apiKey.trim(),
-    api,
-    discovery: { type: "openai-models-list", timeoutMs: 15000 },
-  };
-  config.providers = providers;
-  await writeModelsConfig(config);
-  return { name, replaced: Boolean(previous), baseUrl: url };
+  const normalizedModelIds = [...new Set(modelIds.map((id) => id.trim()).filter(Boolean))];
+  return updateModelsConfig((config) => {
+    const providers = config.providers || {};
+    const previous = providers[name];
+    const previousModels = Array.isArray(previous?.models) ? previous.models : [];
+    if (api === "anthropic-messages" && !normalizedModelIds.length && !previousModels.length) {
+      throw new Error("Anthropic 网关需要至少一个模型 ID，例如 claude-sonnet-4-20250514。");
+    }
+    const next: Provider = {
+      ...(previous || {}),
+      baseUrl: url,
+      apiKey: apiKey.trim(),
+      api,
+    };
+    if (api === "openai-completions" || api === "openai-responses") {
+      next.discovery = { type: "openai-models-list", timeoutMs: 15000 };
+    } else {
+      delete next.discovery;
+      if (normalizedModelIds.length) {
+        next.models = normalizedModelIds.map((id) => ({ id, name: id, api }));
+      }
+    }
+    providers[name] = next;
+    config.providers = providers;
+    return { name, replaced: Boolean(previous), baseUrl: url };
+  });
 }
 
 export async function removeGateway(name: string, confirmation?: string) {
   validateName(name);
   if (confirmation?.toLowerCase() !== "confirm") throw new Error("删除网关需要确认：/feishu gateway remove <名称> confirm");
-  const config = readModelsConfig();
-  const providers = config.providers || {};
-  if (!providers[name]) throw new Error(`网关不存在：${name}`);
-  delete providers[name];
-  config.providers = providers;
-  await writeModelsConfig(config);
-  return name;
+  return updateModelsConfig((config) => {
+    const providers = config.providers || {};
+    if (!providers[name]) throw new Error(`网关不存在：${name}`);
+    delete providers[name];
+    config.providers = providers;
+    return name;
+  });
 }
 
 export async function testGateway(name: string) {
   validateName(name);
   const provider = readModelsConfig().providers?.[name];
   if (!provider) throw new Error(`网关不存在：${name}`);
+  const api = typeof provider.api === "string" ? provider.api : "openai-completions";
   const baseUrl = validateBaseUrl(typeof provider.baseUrl === "string" ? provider.baseUrl : "");
+  if (api === "anthropic-messages") {
+    const models = Array.isArray(provider.models) ? provider.models.length : 0;
+    return { name, endpoint: baseUrl, status: "configured" as const, modelCount: models };
+  }
   const endpoint = `${baseUrl.replace(/\/$/, "")}/models`;
   const headers: Record<string, string> = { accept: "application/json" };
   if (typeof provider.apiKey === "string" && provider.apiKey) headers.authorization = `Bearer ${provider.apiKey}`;
   const response = await fetch(endpoint, { headers, signal: AbortSignal.timeout(15000) });
   const body = await response.text();
-  if (!response.ok) throw new Error(`网关返回 HTTP ${response.status}${body ? `：${body.slice(0, 200)}` : ""}`);
+  if (!response.ok) throw new Error(`网关返回 HTTP ${response.status}`);
   let count = 0;
   try {
     const parsed = JSON.parse(body) as { data?: unknown[]; models?: unknown[] };
@@ -84,9 +102,7 @@ function readModelsConfig(): ModelsConfig {
   return parsed;
 }
 
-async function writeModelsConfig(config: ModelsConfig) {
-  mkdirSync(dirname(MODELS_PATH), { recursive: true });
-  const lease = await acquireFileLease(WRITE_LOCK);
+async function writeModelsConfigUnlocked(config: ModelsConfig) {
   const temporaryPath = `${MODELS_PATH}.tmp-${process.pid}-${Date.now()}`;
   try {
     if (existsSync(MODELS_PATH)) copyFileSync(MODELS_PATH, BACKUP_PATH);
@@ -98,6 +114,18 @@ async function writeModelsConfig(config: ModelsConfig) {
     throw error;
   } finally {
     try { rmSync(temporaryPath, { force: true }); } catch {}
+  }
+}
+
+async function updateModelsConfig<T>(update: (config: ModelsConfig) => T): Promise<T> {
+  mkdirSync(dirname(MODELS_PATH), { recursive: true });
+  const lease = await acquireFileLease(WRITE_LOCK);
+  try {
+    const config = readModelsConfig();
+    const result = update(config);
+    await writeModelsConfigUnlocked(config);
+    return result;
+  } finally {
     releaseFileLease(lease);
   }
 }
@@ -110,5 +138,6 @@ function validateBaseUrl(value: string) {
   let url: URL;
   try { url = new URL(value); } catch { throw new Error("baseUrl 必须是有效的 http:// 或 https:// 地址。"); }
   if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("baseUrl 只支持 http:// 或 https://。");
+  if (url.username || url.password || url.search || url.hash) throw new Error("baseUrl 不能包含用户名、密码、查询参数或片段。");
   return url.toString().replace(/\/$/, "");
 }
