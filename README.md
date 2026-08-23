@@ -14,7 +14,7 @@ All credit for the plugin itself goes to the upstream author. Bugs in the
 patches are not upstream's problem; report plugin bugs upstream and packaging
 bugs here.
 
-## v0.4.59 highlights
+## v0.4.60 highlights
 
 - Active Feishu task cards are persisted and recovered after daemon restarts.
 - Interrupted tasks are marked explicitly instead of remaining stuck on

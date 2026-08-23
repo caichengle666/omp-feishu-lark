@@ -31,6 +31,7 @@ test("task status card shows a queued phase before OMP begins execution", async 
   await card.start();
   await card.setPhase("正在排队等待上一项任务完成");
   assert.match(JSON.stringify(updates.at(-1)), /正在排队等待上一项任务完成/);
+  await card.finish("stopped");
 });
 
 test("task status card shows subagent count while running", () => {

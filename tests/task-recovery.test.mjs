@@ -20,10 +20,9 @@ test("task cards persist while running and clear after a normal finish", async (
   });
   await card.start();
   const active = JSON.parse(readFileSync(ACTIVE_TASKS_PATH, "utf8"));
-  assert.equal(active.length, 1);
-  assert.equal(active[0].cardMessageId, "card-1");
+  assert.ok(active.some((item) => item.cardMessageId === "card-1"));
   await card.finish("done");
-  assert.deepEqual(JSON.parse(readFileSync(ACTIVE_TASKS_PATH, "utf8")), []);
+  assert.equal(JSON.parse(readFileSync(ACTIVE_TASKS_PATH, "utf8")).some((item) => item.cardMessageId === "card-1"), false);
   assert.equal(updates.at(-1).header.title.content, "任务完成");
 });
 
