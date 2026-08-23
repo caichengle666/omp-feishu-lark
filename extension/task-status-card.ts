@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { debugLog } from "./debug.js";
 import { collectArtifactCandidates, isExistingSendableArtifact } from "./artifacts.js";
+import { ACTIVE_TASKS_PATH, readJson, writeJson } from "./config.js";
 
 export type TaskStatus = "running" | "done" | "failed" | "stopped" | "inactive";
 
@@ -20,6 +21,64 @@ type TaskStatusTransport = {
   updateCard(messageId: string, card: object): Promise<void>;
   replyLocalFile(messageId: string, filePath: string): Promise<{ kind: "image" | "file"; fileName: string } | undefined>;
 };
+
+type PersistedTask = {
+  key: string;
+  runId: string;
+  replyToMessageId: string;
+  cardMessageId: string;
+  ownerOpenId?: string;
+  chatId?: string;
+  startedAt: number;
+};
+
+const activeCards = new Set<TaskStatusCard>();
+
+function readActiveTasks(): PersistedTask[] {
+  const value = readJson<unknown>(ACTIVE_TASKS_PATH, []);
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is PersistedTask => Boolean(item && typeof item === "object" && typeof (item as any).key === "string" && typeof (item as any).runId === "string" && typeof (item as any).replyToMessageId === "string" && typeof (item as any).cardMessageId === "string" && typeof (item as any).startedAt === "number"));
+}
+
+function persistActiveTask(task: PersistedTask) {
+  const tasks = readActiveTasks().filter((item) => item.runId !== task.runId);
+  tasks.push(task);
+  writeJson(ACTIVE_TASKS_PATH, tasks);
+}
+
+function removePersistedTask(runId: string) {
+  const tasks = readActiveTasks().filter((item) => item.runId !== runId);
+  writeJson(ACTIVE_TASKS_PATH, tasks);
+}
+
+export async function recoverInterruptedTaskCards(transport: Pick<TaskStatusTransport, "updateCard">) {
+  const tasks = readActiveTasks();
+  if (!tasks.length) return 0;
+  const remaining: PersistedTask[] = [];
+  for (const task of tasks) {
+    try {
+      await transport.updateCard(task.cardMessageId, buildTaskStatusCard({
+        key: task.key,
+        runId: task.runId,
+        status: "failed",
+        phase: "任务已中断：Feishu daemon 在任务完成前重启",
+        elapsedMs: Math.max(0, Date.now() - task.startedAt),
+        ownerOpenId: task.ownerOpenId,
+        chatId: task.chatId,
+      }));
+      debugLog("feishu.task_status.recovered_interrupted", { key: task.key, runId: task.runId, cardMessageId: task.cardMessageId });
+    } catch (error) {
+      remaining.push(task);
+      debugLog("feishu.task_status.recovery_error", { key: task.key, runId: task.runId, error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+  writeJson(ACTIVE_TASKS_PATH, remaining);
+  return tasks.length - remaining.length;
+}
+
+export async function finishActiveTaskCards(status: "failed" | "stopped", phase: string) {
+  await Promise.all([...activeCards].map((card) => card.finish(status, phase)));
+}
 
 const STOP_ACTION = "pi_feishu_stop_task";
 const MAX_PHASE_CHARS = 96;
@@ -61,6 +120,18 @@ export class TaskStatusCard implements TaskStatusSink {
         this.replyToMessageId,
         this.buildCard("running", this.phase),
       );
+      if (this.cardMessageId) {
+        activeCards.add(this);
+        persistActiveTask({
+          key: this.key,
+          runId: this.runId,
+          replyToMessageId: this.replyToMessageId,
+          cardMessageId: this.cardMessageId,
+          ownerOpenId: this.ownerOpenId,
+          chatId: this.chatId,
+          startedAt: this.startedAt,
+        });
+      }
       debugLog("feishu.task_status.started", {
         key: this.key,
         runId: this.runId,
@@ -132,6 +203,8 @@ export class TaskStatusCard implements TaskStatusSink {
   private async finishFinal(status: Exclude<TaskStatus, "running" | "inactive">, phase: string | undefined, force: boolean) {
     if (this.status !== "running") return;
     this.status = status;
+    activeCards.delete(this);
+    removePersistedTask(this.runId);
     this.version += 1;
     this.stopHeartbeat();
     this.clearPendingRunningUpdate();

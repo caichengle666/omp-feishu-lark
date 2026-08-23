@@ -14,7 +14,12 @@ All credit for the plugin itself goes to the upstream author. Bugs in the
 patches are not upstream's problem; report plugin bugs upstream and packaging
 bugs here.
 
-## v0.4.57 highlights
+## v0.4.59 highlights
+
+- Active Feishu task cards are persisted and recovered after daemon restarts.
+- Interrupted tasks are marked explicitly instead of remaining stuck on
+  “仍在处理”.
+- Normal daemon shutdown finalizes active task cards before closing transport.
 
 - Model configuration management is named `Provider` consistently; the old
   `/feishu gateway ...` model commands are no longer accepted.
@@ -40,6 +45,8 @@ providers:
 Then run `/feishu provider sync my-provider`, or
 `/feishu provider sync-all` to synchronize every managed Provider. Providers
 without `feishuManaged: true` are never rewritten by automatic synchronization.
+
+## v0.4.57 highlights
 
 ## v0.4.55 highlights
 

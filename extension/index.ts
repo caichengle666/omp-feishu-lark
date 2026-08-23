@@ -23,7 +23,7 @@ import { acquireFileLease, acquireGatewayLock, gatewayLockPath, readGatewayOwner
 import { FeishuMessageHandler } from "./message-handler.js";
 import { addProvider, listProviders, removeProvider, syncAllProviders, syncProvider, testProvider } from "./provider-config.js";
 import { runSetup, uiConfirm } from "./setup.js";
-import { buildTaskStatusCard, parseStopTaskActionValue } from "./task-status-card.js";
+import { buildTaskStatusCard, finishActiveTaskCards, parseStopTaskActionValue, recoverInterruptedTaskCards } from "./task-status-card.js";
 import { bunDnsArgs, compareVersions, registryNetworkAttempts, resolveTargetVersion, resolveUpgradeNetworkPolicy, upgradeNetworkAttempts, upgradeTimeoutMs } from "./upgrade.js";
 import { BotUnavailableError, FeishuTransport } from "./transport.js";
 import type { FeishuConfig, FeishuStatus } from "./types.js";
@@ -455,6 +455,9 @@ export default function feishuExtension(pi: ExtensionAPI) {
     });
     try {
       await transport.start();
+      await recoverInterruptedTaskCards(transport).catch((error) => {
+        console.error("[feishu] task recovery failed:", error instanceof Error ? error.message : error);
+      });
       if (cfg.notificationWebhookEnabled) {
         notificationWebhook = new FeishuNotificationWebhook(cfg, bridgeStore, delivery);
         await notificationWebhook.start();
@@ -490,6 +493,9 @@ export default function feishuExtension(pi: ExtensionAPI) {
   }
 
   async function stop() {
+    await finishActiveTaskCards("stopped", "任务已停止：Feishu daemon 正在关闭").catch((error) => {
+      console.error("[feishu] task finalization failed:", error instanceof Error ? error.message : error);
+    });
     await notificationWebhook?.stop();
     notificationWebhook = undefined;
     await transport?.stop();

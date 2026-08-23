@@ -19,6 +19,7 @@ export const SUPERVISOR_PID_PATH = join(ROOT_DIR, "supervisor.pid");
 export const SUPERVISOR_STOP_PATH = join(ROOT_DIR, "supervisor.stop");
 export const DEDUPE_PATH = join(ROOT_DIR, "dedupe.json");
 export const BRIDGE_PATH = join(ROOT_DIR, "bridge.json");
+export const ACTIVE_TASKS_PATH = join(ROOT_DIR, "active-tasks.json");
 export const UPGRADE_NOTICE_PATH = join(ROOT_DIR, "upgrade-notice.json");
 export const RESTART_NOTICE_PATH = join(ROOT_DIR, "restart-notice.json");
 export const CHILD_SESSION_ENV = "PI_FEISHU_CHILD_SESSION";
