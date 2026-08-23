@@ -120,6 +120,21 @@ const HELP_EFFORT_BUTTONS: Array<{ label: string; command: string; type?: string
 export function buildHelpCard(options: HelpCardOptions) {
   const queryButtons = HELP_QUERY_BUTTONS.filter((entry) => options.isAdmin || !entry.adminOnly);
   const fillButtons = HELP_FILL_BUTTONS.filter((entry) => options.isAdmin || !entry.adminOnly);
+  const commandExamples = [
+    "`/effort high`：切换思考强度",
+    "`/compact 保留接口参数`：压缩时保留重点",
+    "`/workspace /srv/project`：切换工作目录",
+    "`/send report.pdf`：发送工作区文件",
+    ...(options.isAdmin
+      ? [
+          "`/feishu upgrade 0.4.60`：指定版本升级或降级",
+          "`/feishu provider add openai https://api.example.com/v1 sk-your-api-key openai-completions`：添加 Provider",
+          "`/feishu provider test openai`：测试 Provider",
+          "`/feishu provider sync openai`：同步 Provider 模型",
+          "`/feishu provider remove openai confirm`：确认删除 Provider",
+        ]
+      : []),
+  ];
   const adminElements = options.isAdmin
     ? [
         { tag: "markdown", content: "插件管理（管理员）：" },
@@ -190,7 +205,7 @@ export function buildHelpCard(options: HelpCardOptions) {
     { tag: "hr" },
     {
       tag: "markdown",
-      content: "需要自己补参数的命令：",
+      content: `需要自己补参数的命令：点击上方按钮填入前缀后补参数。\n${commandExamples.join("\n")}`,
     },
     ...buttonRow(fillButtons.map((entry) => ({
       label: entry.label,
@@ -214,7 +229,7 @@ export function buildHelpCard(options: HelpCardOptions) {
           element_id: "help_command_input",
           name: "help_command_input",
           label: { tag: "plain_text", content: "命令" },
-          placeholder: { tag: "plain_text", content: "先点上方按钮填入前缀，或直接输入完整命令" },
+          placeholder: { tag: "plain_text", content: "例：/effort high，或直接输入上方完整命令" },
           default_value: options.draft || "",
           width: "fill",
           required: true,

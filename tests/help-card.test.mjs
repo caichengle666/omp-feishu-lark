@@ -29,6 +29,12 @@ test("help card uses JSON 2.0 with run, fill, and submit actions", () => {
   assert.match(raw, /测试 Provider/);
   assert.match(raw, /同步 Provider/);
   assert.match(raw, /删除 Provider（需确认）/);
+  assert.match(raw, /\/feishu provider add openai https:\/\/api\.example\.com\/v1 sk-your-api-key openai-completions/);
+  assert.match(raw, /`\/feishu provider test openai`/);
+  assert.match(raw, /`\/feishu provider sync openai`/);
+  assert.match(raw, /`\/feishu provider remove openai confirm`/);
+  assert.match(raw, /`\/workspace \/srv\/project`/);
+  assert.match(raw, /`\/send report\.pdf`/);
   assert.match(raw, /确认重置插件/);
   assert.match(raw, /Skill 开启/);
   assert.match(raw, /Skill 关闭/);
