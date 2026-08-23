@@ -27,6 +27,7 @@ test("help card uses JSON 2.0 with run, fill, and submit actions", () => {
   assert.match(raw, /指定版本升\/降级/);
   assert.match(raw, /添加 Provider/);
   assert.match(raw, /测试 Provider/);
+  assert.match(raw, /同步 Provider/);
   assert.match(raw, /删除 Provider（需确认）/);
   assert.match(raw, /确认重置插件/);
   assert.match(raw, /Skill 开启/);

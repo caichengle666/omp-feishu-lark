@@ -36,21 +36,13 @@ export async function addProvider(name: string, baseUrl: string, apiKey: string,
     const previous = providers[name];
     const previousModels = Array.isArray(previous?.models) ? previous.models : [];
     if (api === "anthropic-messages" && !normalizedModelIds.length && !previousModels.length) {
-      throw new Error("Anthropic 网关需要至少一个模型 ID，例如 claude-sonnet-4-20250514。");
+      throw new Error("Anthropic Provider 需要至少一个模型 ID，例如 claude-sonnet-4-20250514。");
     }
-    const next: Provider = {
-      ...(previous || {}),
-      baseUrl: url,
-      apiKey: apiKey.trim(),
-      api,
-    };
-    if (api === "openai-completions" || api === "openai-responses") {
-      next.discovery = { type: "openai-models-list", timeoutMs: 15000 };
-    } else {
+    const next: Provider = { ...(previous || {}), baseUrl: url, apiKey: apiKey.trim(), api, feishuManaged: true };
+    if (api === "openai-completions" || api === "openai-responses") next.discovery = { type: "openai-models-list", timeoutMs: 15000 };
+    else {
       delete next.discovery;
-      if (normalizedModelIds.length) {
-        next.models = normalizedModelIds.map((id) => ({ id, name: id, api }));
-      }
+      if (normalizedModelIds.length) next.models = normalizedModelIds.map((id) => ({ id, name: id, api }));
     }
     providers[name] = next;
     config.providers = providers;
@@ -60,10 +52,10 @@ export async function addProvider(name: string, baseUrl: string, apiKey: string,
 
 export async function removeProvider(name: string, confirmation?: string) {
   validateName(name);
-  if (confirmation?.toLowerCase() !== "confirm") throw new Error("删除网关需要确认：/feishu gateway remove <名称> confirm");
+  if (confirmation?.toLowerCase() !== "confirm") throw new Error("删除 Provider 需要确认：/feishu provider remove <名称> confirm");
   return updateModelsConfig((config) => {
     const providers = config.providers || {};
-    if (!providers[name]) throw new Error(`网关不存在：${name}`);
+    if (!providers[name]) throw new Error(`Provider 不存在：${name}`);
     delete providers[name];
     config.providers = providers;
     return name;
@@ -73,7 +65,7 @@ export async function removeProvider(name: string, confirmation?: string) {
 export async function testProvider(name: string) {
   validateName(name);
   const provider = readModelsConfig().providers?.[name];
-  if (!provider) throw new Error(`网关不存在：${name}`);
+  if (!provider) throw new Error(`Provider 不存在：${name}`);
   const api = typeof provider.api === "string" ? provider.api : "openai-completions";
   const baseUrl = validateBaseUrl(typeof provider.baseUrl === "string" ? provider.baseUrl : "");
   if (api === "anthropic-messages") {
@@ -85,13 +77,45 @@ export async function testProvider(name: string) {
   if (typeof provider.apiKey === "string" && provider.apiKey) headers.authorization = `Bearer ${provider.apiKey}`;
   const response = await fetch(endpoint, { headers, signal: AbortSignal.timeout(15000) });
   const body = await response.text();
-  if (!response.ok) throw new Error(`网关返回 HTTP ${response.status}`);
+  if (!response.ok) throw new Error(`Provider 返回 HTTP ${response.status}`);
   let count = 0;
   try {
     const parsed = JSON.parse(body) as { data?: unknown[]; models?: unknown[] };
     count = Array.isArray(parsed.data) ? parsed.data.length : Array.isArray(parsed.models) ? parsed.models.length : 0;
   } catch {}
   return { name, endpoint, status: response.status, modelCount: count };
+}
+
+export async function syncProvider(name: string) {
+  validateName(name);
+  const config = readModelsConfig();
+  const provider = config.providers?.[name];
+  if (!provider) throw new Error(`Provider 不存在：${name}`);
+  if (provider.feishuManaged !== true) throw new Error(`Provider ${name} 未启用自动同步，请在 models.yml 设置 feishuManaged: true。`);
+  const api = typeof provider.api === "string" ? provider.api : "openai-completions";
+  if (api === "anthropic-messages") throw new Error("Anthropic Provider 没有标准模型发现接口，请手动维护 models.yml。");
+  const baseUrl = validateBaseUrl(typeof provider.baseUrl === "string" ? provider.baseUrl : "");
+  const endpoint = `${baseUrl.replace(/\/$/, "")}/models`;
+  const headers: Record<string, string> = { accept: "application/json" };
+  if (typeof provider.apiKey === "string" && provider.apiKey) headers.authorization = `Bearer ${provider.apiKey}`;
+  const response = await fetch(endpoint, { headers, signal: AbortSignal.timeout(15000) });
+  if (!response.ok) throw new Error(`Provider 返回 HTTP ${response.status}`);
+  const body = await response.json() as { data?: Array<{ id?: unknown; name?: unknown }>; models?: Array<{ id?: unknown; name?: unknown }> };
+  const entries = Array.isArray(body.data) ? body.data : Array.isArray(body.models) ? body.models : [];
+  const models = entries.map((item) => typeof item.id === "string" ? { id: item.id, name: typeof item.name === "string" ? item.name : item.id, api } : undefined).filter((item): item is { id: string; name: string; api: string } => Boolean(item));
+  return updateModelsConfig((latest) => {
+    const current = latest.providers?.[name];
+    if (!current || current.feishuManaged !== true) throw new Error(`Provider ${name} 已被修改，未执行同步。`);
+    latest.providers![name] = { ...current, models };
+    return { name, modelCount: models.length };
+  });
+}
+
+export async function syncAllProviders() {
+  const names = Object.entries(readModelsConfig().providers || {}).filter(([, provider]) => provider.feishuManaged === true && provider.api !== "anthropic-messages").map(([name]) => name);
+  const results = [];
+  for (const name of names) results.push(await syncProvider(name));
+  return results;
 }
 
 function readModelsConfig(): ModelsConfig {
@@ -112,26 +136,18 @@ async function writeModelsConfigUnlocked(config: ModelsConfig) {
   } catch (error) {
     try { if (existsSync(BACKUP_PATH)) copyFileSync(BACKUP_PATH, MODELS_PATH); } catch {}
     throw error;
-  } finally {
-    try { rmSync(temporaryPath, { force: true }); } catch {}
-  }
+  } finally { try { rmSync(temporaryPath, { force: true }); } catch {} }
 }
 
 async function updateModelsConfig<T>(update: (config: ModelsConfig) => T): Promise<T> {
   mkdirSync(dirname(MODELS_PATH), { recursive: true });
   const lease = await acquireFileLease(WRITE_LOCK);
-  try {
-    const config = readModelsConfig();
-    const result = update(config);
-    await writeModelsConfigUnlocked(config);
-    return result;
-  } finally {
-    releaseFileLease(lease);
-  }
+  try { const config = readModelsConfig(); const result = update(config); await writeModelsConfigUnlocked(config); return result; }
+  finally { releaseFileLease(lease); }
 }
 
 function validateName(name: string) {
-  if (!PROVIDER_NAME.test(name)) throw new Error("网关名称只能包含字母、数字、点、下划线和短横线，长度不超过 64。");
+  if (!PROVIDER_NAME.test(name)) throw new Error("Provider 名称只能包含字母、数字、点、下划线和短横线，长度不超过 64。");
 }
 
 function validateBaseUrl(value: string) {

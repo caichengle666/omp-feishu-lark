@@ -29,6 +29,8 @@ export type BotCommand =
   | { name: "providerList" }
   | { name: "providerAdd"; provider?: string }
   | { name: "providerTest"; provider?: string }
+  | { name: "providerSync"; provider?: string }
+  | { name: "providerSyncAll" }
   | { name: "providerRemove"; provider?: string; confirmation?: string };
 
 type PostBody = {
@@ -133,12 +135,14 @@ export function parseBotCommand(text: string): BotCommand | undefined {
   const skillsMatch = trimmed.match(/^\/feishu\s+skills(?:\s+(on|off))?$/i);
   if (skillsMatch) return { name: "skills", enabled: skillsMatch[1]?.toLowerCase() };
   if (lower === "/feishu reset") return { name: "reset" };
-  const providerMatch = trimmed.match(/^\/feishu\s+provider(?:\s+(list|add|test|remove)(?:\s+(.+))?)?$/is);
+  const providerMatch = trimmed.match(/^\/feishu\s+provider(?:\s+(list|add|test|sync-all|sync|remove)(?:\s+(.+))?)?$/is);
   if (providerMatch) {
     const action = (providerMatch[1] || "list").toLowerCase();
     const args = providerMatch[2]?.trim().split(/\s+/) || [];
     if (action === "list") return { name: "providerList" };
     if (action === "test") return { name: "providerTest", provider: args[0] };
+    if (action === "sync-all") return { name: "providerSyncAll" };
+    if (action === "sync") return { name: "providerSync", provider: args[0] };
     if (action === "remove") return { name: "providerRemove", provider: args[0], confirmation: args[1] };
     if (action === "add") return { name: "providerAdd", provider: providerMatch[2]?.trim() };
   }

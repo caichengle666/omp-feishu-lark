@@ -29,11 +29,14 @@ test("bot parser recognizes provider management commands", () => {
     provider: "edge https://api.example.test/v1 secret-key openai-completions",
   });
   assert.deepEqual(parseBotCommand("/feishu provider test edge"), { name: "providerTest", provider: "edge" });
+  assert.deepEqual(parseBotCommand("/feishu provider sync edge"), { name: "providerSync", provider: "edge" });
+  assert.deepEqual(parseBotCommand("/feishu provider sync-all"), { name: "providerSyncAll" });
   assert.deepEqual(parseBotCommand("/feishu provider remove edge confirm"), {
     name: "providerRemove",
     provider: "edge",
     confirmation: "confirm",
   });
+  assert.equal(parseBotCommand("/feishu gateway list"), undefined);
 });
 
 test("provider management requires an administrator and forwards parsed arguments", async () => {

@@ -35,6 +35,8 @@ export class FeishuMessageHandler {
         list: () => string | Promise<string>;
         add: (spec: string) => Promise<string>;
         test: (name?: string) => Promise<string>;
+        sync: (name?: string) => Promise<string>;
+        syncAll: () => Promise<string>;
         remove: (name?: string, confirmation?: string) => Promise<string>;
       };
       lifecycle?: {
@@ -261,7 +263,7 @@ export class FeishuMessageHandler {
       return true;
     }
 
-    if (command.name === "providerList" || command.name === "providerAdd" || command.name === "providerTest" || command.name === "providerRemove") {
+    if (command.name === "providerList" || command.name === "providerAdd" || command.name === "providerTest" || command.name === "providerSync" || command.name === "providerSyncAll" || command.name === "providerRemove") {
       if (!this.diagnostics?.isAdmin?.(msg.senderOpenId)) {
         await transport.replyText(msg.messageId, `Provider 管理需要管理员权限。请将你的 Open ID 加入 adminOpenIds：${msg.senderOpenId}`);
         return true;
@@ -272,6 +274,8 @@ export class FeishuMessageHandler {
         if (command.name === "providerList") await transport.replyText(msg.messageId, await provider.list());
         if (command.name === "providerAdd") await transport.replyText(msg.messageId, await provider.add(command.provider || ""));
         if (command.name === "providerTest") await transport.replyText(msg.messageId, await provider.test(command.provider));
+        if (command.name === "providerSync") await transport.replyText(msg.messageId, await provider.sync(command.provider));
+        if (command.name === "providerSyncAll") await transport.replyText(msg.messageId, await provider.syncAll());
         if (command.name === "providerRemove") await transport.replyText(msg.messageId, await provider.remove(command.provider, command.confirmation));
       } catch (error) {
         await transport.replyText(msg.messageId, `Provider 操作失败：${error instanceof Error ? error.message : String(error)}`);

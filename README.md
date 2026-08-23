@@ -14,15 +14,53 @@ All credit for the plugin itself goes to the upstream author. Bugs in the
 patches are not upstream's problem; report plugin bugs upstream and packaging
 bugs here.
 
+## v0.4.57 highlights
+
+- Model configuration management is named `Provider` consistently; the old
+  `/feishu gateway ...` model commands are no longer accepted.
+- Added `/feishu provider sync <名称>` and `/feishu provider sync-all` to persist
+  upstream OpenAI-compatible model changes into `models.yml`.
+- Only providers with `feishuManaged: true` are synchronized; Anthropic models
+  remain manually managed because Anthropic has no standard model-list endpoint.
+
+To enable persistent upstream model synchronization, edit
+`~/.omp/agent/models.yml` (on Windows, usually
+`C:\\Users\\<用户名>\\.omp\\agent\\models.yml`) and set
+`feishuManaged: true` for the Provider:
+
+```yaml
+providers:
+  my-provider:
+    baseUrl: https://api.example.com/v1
+    apiKey: your-api-key
+    api: openai-completions
+    feishuManaged: true
+```
+
+Then run `/feishu provider sync my-provider`, or
+`/feishu provider sync-all` to synchronize every managed Provider. Providers
+without `feishuManaged: true` are never rewritten by automatic synchronization.
+
 ## v0.4.55 highlights
 
 - Combines the administrator Skill controls from v0.4.54 with Feishu model
-  gateway management from the local branch.
+  Provider management from the local branch.
 - Feishu administrators can use `/feishu provider list|add|test|remove` and
   `/feishu skills on|off`; both command families are included in the help card,
   completions, authorization checks, and regression tests.
 - Provider changes preserve the existing model configuration, enable online
   discovery, and refresh the active OMP model registry.
+
+For persistent model synchronization, a managed provider looks like this:
+
+```yaml
+providers:
+  my-provider:
+    baseUrl: https://api.example.com/v1
+    apiKey: your-key
+    api: openai-completions
+    feishuManaged: true
+```
 
 ## v0.4.54 highlights
 

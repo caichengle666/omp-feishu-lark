@@ -82,6 +82,7 @@ const HELP_FILL_BUTTONS: Array<{ label: string; draft: string; adminOnly?: boole
   { label: "指定版本升/降级", draft: "/feishu upgrade ", adminOnly: true },
   { label: "添加 Provider", draft: "/feishu provider add ", adminOnly: true },
   { label: "测试 Provider", draft: "/feishu provider test ", adminOnly: true },
+  { label: "同步 Provider", draft: "/feishu provider sync ", adminOnly: true },
   { label: "删除 Provider（需确认）", draft: "/feishu provider remove ", adminOnly: true },
   { label: "确认重置插件", draft: "/feishu reset", adminOnly: true },
 ];
@@ -94,6 +95,7 @@ const HELP_QUERY_BUTTONS: Array<{ label: string; command: string; type?: string;
   { label: "日志（管理员）", command: "debug", adminOnly: true },
   { label: "刷新模型（管理员）", command: "refresh", adminOnly: true },
   { label: "Provider 列表（管理员）", command: "feishu provider list", adminOnly: true },
+  { label: "同步全部 Provider（管理员）", command: "feishu provider sync-all", adminOnly: true },
 ];
 
 const HELP_ADMIN_BUTTONS: Array<{ label: string; command: string; type?: string }> = [

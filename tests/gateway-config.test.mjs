@@ -8,7 +8,7 @@ process.env.OMP_FEISHU_ROOT = join(root, "feishu");
 process.env.OMP_AGENT_DIR = join(root, "agent");
 process.env.PI_CODING_AGENT_DIR = join(root, "agent");
 
-const { MODELS_PATH, addProvider, listProviders, removeProvider, testProvider } = await import("../extension/gateway-config.ts");
+const { MODELS_PATH, addProvider, listProviders, removeProvider, syncAllProviders, syncProvider, testProvider } = await import("../extension/provider-config.ts");
 
 afterEach(() => rmSync(root, { recursive: true, force: true }));
 
@@ -61,12 +61,40 @@ test("test gateway sends bearer auth to the real models endpoint", async () => {
 });
 
 test("gateway validation rejects unsafe names, URLs, and APIs", async () => {
-  await assert.rejects(addProvider("bad name", "https://api.example.test", "secret"), /网关名称/);
+  await assert.rejects(addProvider("bad name", "https://api.example.test", "secret"), /Provider 名称/);
   await assert.rejects(addProvider("edge", "file:///tmp/models", "secret"), /只支持 http/);
   await assert.rejects(addProvider("edge", "https://api.example.test", "secret", "unknown-api"), /不支持的 API/);
   await assert.rejects(addProvider("edge", "https://user:pass@example.test", "secret"), /用户名/);
   await assert.rejects(addProvider("edge", "https://api.example.test?token=x", "secret"), /查询参数/);
   await assert.rejects(addProvider("edge", "https://api.example.test/#secret", "secret"), /片段/);
+});
+
+test("sync provider persists upstream models only for managed providers", async () => {
+  const server = Bun.serve({
+    port: 0,
+    fetch(request) {
+      assert.equal(new URL(request.url).pathname, "/v1/models");
+      return Response.json({ data: [{ id: "new-model" }, { id: "second-model", name: "Second" }] });
+    },
+  });
+  try {
+    mkdirSync(join(root, "agent"), { recursive: true });
+    writeFileSync(MODELS_PATH, Bun.YAML.stringify({ providers: {
+      managed: { baseUrl: `http://127.0.0.1:${server.port}/v1`, apiKey: "secret", feishuManaged: true },
+      manual: { baseUrl: `http://127.0.0.1:${server.port}/v1`, apiKey: "secret" },
+    } }), "utf8");
+    const result = await syncProvider("managed");
+    assert.equal(result.modelCount, 2);
+    const config = Bun.YAML.parse(readFileSync(MODELS_PATH, "utf8"));
+    assert.deepEqual(config.providers.managed.models, [
+      { id: "new-model", name: "new-model", api: "openai-completions" },
+      { id: "second-model", name: "Second", api: "openai-completions" },
+    ]);
+    await assert.rejects(syncProvider("manual"), /未启用自动同步/);
+    assert.equal((await syncAllProviders()).length, 1);
+  } finally {
+    server.stop(true);
+  }
 });
 
 test("anthropic gateway stores static models and skips discovery", async () => {

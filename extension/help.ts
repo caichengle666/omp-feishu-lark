@@ -29,6 +29,8 @@ export function feishuHelpText(ompCommands?: ReadonlyArray<OmpCommandInfo>) {
     "/feishu provider list - 查看已配置 Provider（管理员）",
     "/feishu provider add <名称> <baseUrl> <API Key> [api] [modelId...] - 添加或更新 Provider（管理员）",
     "/feishu provider test <名称> - 测试 Provider 或检查静态模型（管理员）",
+    "/feishu provider sync <名称> - 同步已托管 Provider 的上游模型到 models.yml（管理员）",
+    "/feishu provider sync-all - 同步全部已托管 Provider（管理员）",
     "/feishu provider remove <名称> confirm - 删除 Provider（管理员）",
     "/feishu commands 或 /commands - 说明 OMP 原生命令仅能在本机终端执行",
     "/new - 新建当前飞书会话（群聊需管理员）",

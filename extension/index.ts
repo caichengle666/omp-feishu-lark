@@ -21,7 +21,7 @@ import { feishuHelpText } from "./help.js";
 import { FeishuNotificationWebhook } from "./notification-webhook.js";
 import { acquireFileLease, acquireGatewayLock, gatewayLockPath, readGatewayOwner, releaseFileLease, type GatewayLockHandle, type GatewayOwner } from "./gateway-lock.js";
 import { FeishuMessageHandler } from "./message-handler.js";
-import { addProvider, listProviders, removeProvider, testProvider } from "./gateway-config.js";
+import { addProvider, listProviders, removeProvider, syncAllProviders, syncProvider, testProvider } from "./provider-config.js";
 import { runSetup, uiConfirm } from "./setup.js";
 import { buildTaskStatusCard, parseStopTaskActionValue } from "./task-status-card.js";
 import { bunDnsArgs, compareVersions, registryNetworkAttempts, resolveTargetVersion, resolveUpgradeNetworkPolicy, upgradeNetworkAttempts, upgradeTimeoutMs } from "./upgrade.js";
@@ -86,6 +86,8 @@ export default function feishuExtension(pi: ExtensionAPI) {
       list: () => providerListReport(),
       add: (spec) => providerAddReport(spec),
       test: (name) => providerTestReport(name),
+      sync: (name) => providerSyncReport(name),
+      syncAll: () => providerSyncAllReport(),
       remove: (name, confirmation) => providerRemoveReport(name, confirmation),
     },
     lifecycle: {
@@ -176,10 +178,23 @@ export default function feishuExtension(pi: ExtensionAPI) {
 
   async function providerAddReport(spec: string) {
     const [name, baseUrl, apiKey, api = "openai-completions", ...modelIds] = spec.trim().split(/\s+/);
-    if (!name || !baseUrl || !apiKey) throw new Error("用法：/feishu gateway add <名称> <baseUrl> <API Key> [api] [modelId...]");
+    if (!name || !baseUrl || !apiKey) throw new Error("用法：/feishu provider add <名称> <baseUrl> <API Key> [api] [modelId...]");
     const result = await addProvider(name, baseUrl, apiKey, api, modelIds);
     await conversations.refreshModels();
     return `Provider ${result.name} 已${result.replaced ? "更新" : "添加"}。模型列表已刷新。`;
+  }
+
+  async function providerSyncReport(name?: string) {
+    if (!name) throw new Error("用法：/feishu provider sync <名称>");
+    const result = await syncProvider(name);
+    await conversations.refreshModels();
+    return `Provider ${result.name} 已同步，当前 ${result.modelCount} 个模型。`;
+  }
+
+  async function providerSyncAllReport() {
+    const results = await syncAllProviders();
+    await conversations.refreshModels();
+    return `Provider 已同步 ${results.length} 个，模型总数 ${results.reduce((sum, item) => sum + item.modelCount, 0)}。`;
   }
 
   async function providerTestReport(name?: string) {
@@ -1039,11 +1054,19 @@ async function upgradeDaemon(targetVersion: string, noticeTarget?: NoticeTarget,
             ctx.ui.notify(await providerTestReport(providerArgs[0]), "info");
             return;
           }
+          if (action === "sync") {
+            ctx.ui.notify(await providerSyncReport(providerArgs[0]), "info");
+            return;
+          }
+          if (action === "sync-all") {
+            ctx.ui.notify(await providerSyncAllReport(), "info");
+            return;
+          }
           if (action === "remove") {
             ctx.ui.notify(await providerRemoveReport(providerArgs[0], providerArgs[1]), "info");
             return;
           }
-          ctx.ui.notify("用法：/feishu provider list|add|test|remove", "info");
+          ctx.ui.notify("用法：/feishu provider list|add|test|sync|sync-all|remove", "info");
           return;
         }
         if (cmd === "help") {
@@ -1242,20 +1265,19 @@ async function upgradeDaemon(targetVersion: string, noticeTarget?: NoticeTarget,
   // daemon 里监听 models.yml 变化,自动刷新模型列表
   if (process.env.PI_FEISHU_DAEMON === "1") {
     const modelsPath = join(getAgentDir(), "models.yml");
-    if (existsSync(modelsPath)) {
-      let debounce: NodeJS.Timeout | null = null;
-      const modelsName = basename(modelsPath);
-      watch(dirname(modelsPath), (_eventType, filename) => {
-        if (filename && filename.toString() !== modelsName) return;
-        if (debounce) clearTimeout(debounce);
-        debounce = setTimeout(() => {
-          console.error("[feishu] models.yml changed, refreshing...");
-          conversations.refreshModels().catch((err) =>
-            console.error("[feishu] refresh failed:", err),
-          );
-        }, 1000);
-      });
-    }
+    mkdirSync(dirname(modelsPath), { recursive: true });
+    let debounce: NodeJS.Timeout | null = null;
+    const modelsName = basename(modelsPath);
+    watch(dirname(modelsPath), (_eventType, filename) => {
+      if (filename && filename.toString() !== modelsName) return;
+      if (debounce) clearTimeout(debounce);
+      debounce = setTimeout(() => {
+        console.error("[feishu] models.yml changed, refreshing...");
+        conversations.refreshModels().catch((err) =>
+          console.error("[feishu] refresh failed:", err),
+        );
+      }, 1000);
+    });
   }
 
   pi.on("session_shutdown", async () => {
