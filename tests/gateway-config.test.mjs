@@ -69,6 +69,20 @@ test("gateway validation rejects unsafe names, URLs, and APIs", async () => {
   await assert.rejects(addProvider("edge", "https://api.example.test/#secret", "secret"), /片段/);
 });
 
+test("test auto provider persists the detected protocol", async () => {
+  const server = Bun.serve({ port: 0, fetch() { return Response.json({ data: [{ id: "detected" }] }); } });
+  try {
+    mkdirSync(join(root, "agent"), { recursive: true });
+    writeFileSync(MODELS_PATH, Bun.YAML.stringify({ providers: { local: { baseUrl: `http://127.0.0.1:${server.port}/v1`, apiKey: "secret", feishuManaged: true } } }), "utf8");
+    const result = await testProvider("local");
+    assert.equal(result.modelCount, 1);
+    const config = Bun.YAML.parse(readFileSync(MODELS_PATH, "utf8"));
+    assert.equal(config.providers.local.api, "openai-completions");
+  } finally {
+    server.stop(true);
+  }
+});
+
 test("auto protocol detects OpenAI-compatible providers and persists the result", async () => {
   const server = Bun.serve({ port: 0, fetch(request) {
     assert.equal(new URL(request.url).pathname, "/v1/models");

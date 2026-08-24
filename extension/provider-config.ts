@@ -69,23 +69,19 @@ export async function testProvider(name: string) {
   if (!provider) throw new Error(`Provider 不存在：${name}`);
   const api = typeof provider.api === "string" ? provider.api : "auto";
   const baseUrl = validateBaseUrl(typeof provider.baseUrl === "string" ? provider.baseUrl : "");
-  const resolvedApi = api === "auto" ? await detectOpenAiProtocol(baseUrl, typeof provider.apiKey === "string" ? provider.apiKey : "") : api;
   if (api === "anthropic-messages") {
     const models = Array.isArray(provider.models) ? provider.models.length : 0;
     return { name, endpoint: baseUrl, status: "configured" as const, modelCount: models };
   }
-  const endpoint = `${baseUrl.replace(/\/$/, "")}/models`;
-  const headers: Record<string, string> = { accept: "application/json" };
-  if (typeof provider.apiKey === "string" && provider.apiKey) headers.authorization = `Bearer ${provider.apiKey}`;
-  const response = await fetch(endpoint, { headers, signal: AbortSignal.timeout(15000) });
-  const body = await response.text();
-  if (!response.ok) throw new Error(`Provider 返回 HTTP ${response.status}`);
-  let count = 0;
-  try {
-    const parsed = JSON.parse(body) as { data?: unknown[]; models?: unknown[] };
-    count = Array.isArray(parsed.data) ? parsed.data.length : Array.isArray(parsed.models) ? parsed.models.length : 0;
-  } catch {}
-  return { name, endpoint, status: response.status, modelCount: count };
+  const discovered = await fetchOpenAiModels(baseUrl, typeof provider.apiKey === "string" ? provider.apiKey : "");
+  if (api === "auto") {
+    await updateModelsConfig((latest) => {
+      const current = latest.providers?.[name];
+      if (!current || providerFingerprint(current) !== providerFingerprint(provider)) throw new Error(`Provider ${name} 已被修改，未执行自动协议判断。`);
+      latest.providers![name] = { ...current, api: "openai-completions", discovery: { type: "openai-models-list", timeoutMs: 15000 } };
+    });
+  }
+  return { name, endpoint: `${baseUrl.replace(/\/$/, "")}/models`, status: discovered.status, modelCount: discovered.entries.length };
 }
 
 export async function syncProvider(name: string) {
@@ -97,18 +93,13 @@ export async function syncProvider(name: string) {
   const api = typeof provider.api === "string" ? provider.api : "auto";
   if (api === "anthropic-messages") throw new Error("Anthropic Provider 没有标准模型发现接口，请手动维护 models.yml。");
   const baseUrl = validateBaseUrl(typeof provider.baseUrl === "string" ? provider.baseUrl : "");
-  const resolvedApi = api === "auto" ? await detectOpenAiProtocol(baseUrl, typeof provider.apiKey === "string" ? provider.apiKey : "") : api;
-  const endpoint = `${baseUrl.replace(/\/$/, "")}/models`;
-  const headers: Record<string, string> = { accept: "application/json" };
-  if (typeof provider.apiKey === "string" && provider.apiKey) headers.authorization = `Bearer ${provider.apiKey}`;
-  const response = await fetch(endpoint, { headers, signal: AbortSignal.timeout(15000) });
-  if (!response.ok) throw new Error(`Provider 返回 HTTP ${response.status}`);
-  const body = await response.json() as { data?: Array<{ id?: unknown; name?: unknown }>; models?: Array<{ id?: unknown; name?: unknown }> };
-  const entries = Array.isArray(body.data) ? body.data : Array.isArray(body.models) ? body.models : [];
+  const discovered = await fetchOpenAiModels(baseUrl, typeof provider.apiKey === "string" ? provider.apiKey : "");
+  const resolvedApi = api === "auto" ? "openai-completions" : api;
+  const entries = discovered.entries;
   const models = entries.map((item) => typeof item.id === "string" ? { id: item.id, name: typeof item.name === "string" ? item.name : item.id, api: resolvedApi } : undefined).filter((item): item is { id: string; name: string; api: string } => Boolean(item));
   return updateModelsConfig((latest) => {
     const current = latest.providers?.[name];
-    if (!current || current.feishuManaged !== true) throw new Error(`Provider ${name} 已被修改，未执行同步。`);
+    if (!current || current.feishuManaged !== true || providerFingerprint(current) !== providerFingerprint(provider)) throw new Error(`Provider ${name} 已被修改，未执行同步。`);
     latest.providers![name] = { ...current, api: resolvedApi, discovery: { type: "openai-models-list", timeoutMs: 15000 }, models };
     return { name, modelCount: models.length };
   });
@@ -154,6 +145,11 @@ function validateName(name: string) {
 }
 
 async function detectOpenAiProtocol(baseUrl: string, apiKey: string) {
+  await fetchOpenAiModels(baseUrl, apiKey);
+  return "openai-completions";
+}
+
+async function fetchOpenAiModels(baseUrl: string, apiKey: string) {
   const endpoint = `${baseUrl.replace(/\/$/, "")}/models`;
   const headers: Record<string, string> = { accept: "application/json" };
   if (apiKey.trim()) headers.authorization = `Bearer ${apiKey.trim()}`;
@@ -163,8 +159,21 @@ async function detectOpenAiProtocol(baseUrl: string, apiKey: string) {
   } catch (error) {
     throw new Error(`自动判断 Provider 协议失败：${error instanceof Error ? error.message : String(error)}。请手动指定 api。`);
   }
-  if (!response.ok) throw new Error(`自动判断 Provider 协议失败：/models 返回 HTTP ${response.status}。请手动指定 api。`);
-  return "openai-completions";
+  const body = await response.text();
+  if (!response.ok) throw new Error(`Provider 返回 HTTP ${response.status}`);
+  let parsed: { data?: Array<{ id?: unknown; name?: unknown }>; models?: Array<{ id?: unknown; name?: unknown }> } = {};
+  try { parsed = JSON.parse(body) as typeof parsed; } catch { throw new Error("Provider /models 返回的不是有效 JSON。"); }
+  const entries = Array.isArray(parsed.data) ? parsed.data : Array.isArray(parsed.models) ? parsed.models : [];
+  return { status: response.status, entries };
+}
+
+function providerFingerprint(provider: Provider) {
+  return JSON.stringify({
+    baseUrl: provider.baseUrl,
+    apiKey: provider.apiKey,
+    api: provider.api,
+    feishuManaged: provider.feishuManaged,
+  });
 }
 
 function validateBaseUrl(value: string) {

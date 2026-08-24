@@ -19,6 +19,12 @@ bugs here.
 - RPC launches ignore interactive `approvalMode` flags because the OMP RPC channel does not expose tool-permission responses; this prevents permanent approval waits. Tool approval-card support remains an OMP upstream responsibility.
 - Provider commands accept `api: auto` and persist `openai-completions` only after a successful `/models` probe; explicit protocols are preserved.
 
+## v0.4.63 highlights
+
+- Provider tests reuse the single `/models` probe and persist automatic protocol detection without issuing duplicate upstream requests.
+- Provider synchronization checks the configuration fingerprint before writing results, so a slower request cannot overwrite a newer administrator edit.
+- Diagnostics now show when `approvalMode` is ignored by RPC mode, making the responsibility boundary with OMP upstream explicit.
+
 ## v0.4.60 highlights
 
 - Active Feishu task cards are persisted and recovered after daemon restarts.

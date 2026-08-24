@@ -230,6 +230,7 @@ export default function feishuExtension(pi: ExtensionAPI) {
       `Admins: ${(cfg.adminOpenIds || []).join(", ") || "none"}`,
       `Auto start: ${cfg.autoStart !== false ? "on" : "off"}`,
       `OMP skills: ${cfg.ompLaunch?.enableSkills === true ? "on" : "off"}${cfg.ompLaunch?.skills?.length ? ` (${cfg.ompLaunch.skills.join(", ")})` : ""}`,
+      `OMP approval: ${cfg.ompLaunch?.approvalMode ? `${cfg.ompLaunch.approvalMode}（RPC 模式忽略交互审批）` : "RPC 安全模式"}`,
       `Prompt notice: ${cfg.promptNotifySec || 0}s`,
       `Notification webhook: ${cfg.notificationWebhookEnabled ? "enabled" : "disabled"}`,
       `Config path: ${CONFIG_PATH}`,
