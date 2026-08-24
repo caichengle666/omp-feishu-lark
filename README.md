@@ -14,6 +14,11 @@ All credit for the plugin itself goes to the upstream author. Bugs in the
 patches are not upstream's problem; report plugin bugs upstream and packaging
 bugs here.
 
+## v0.4.62 highlights
+
+- RPC launches ignore interactive `approvalMode` flags because the OMP RPC channel does not expose tool-permission responses; this prevents permanent approval waits. Tool approval-card support remains an OMP upstream responsibility.
+- Provider commands accept `api: auto` and persist `openai-completions` only after a successful `/models` probe; explicit protocols are preserved.
+
 ## v0.4.60 highlights
 
 - Active Feishu task cards are persisted and recovered after daemon restarts.
@@ -80,7 +85,7 @@ providers:
 - `/feishu refresh` now forces an online model registry refresh instead of only refreshing a prewarmed cache, and reports the resulting model count.
 - The internal OMP model database is refreshed; hand-edited `models.yml` remains untouched.
 - Remaining Feishu-facing fallback labels now use the OMP brand.
-- Feishu administrators can manage multiple OMP model providers with `/feishu provider list`, `/feishu provider add <名称> <baseUrl> <API Key> [api] [modelId...]`, `/feishu provider test <名称>`, and `/feishu provider remove <名称> confirm`.
+- Feishu administrators can manage multiple OMP model providers with `/feishu provider list`, `/feishu provider add <名称> <baseUrl> <API Key> [api] [modelId...]`, `/feishu provider test <名称>`, and `/feishu provider remove <名称> confirm`. Set `api` to `auto` to probe the OpenAI-compatible `/models` endpoint and persist `openai-completions`; existing explicit protocols are never changed. Anthropic still requires `anthropic-messages` and static model IDs.
 - OpenAI providers use OMP's `openai-models-list` discovery. Anthropic providers use the `anthropic-messages` API and require one or more static model IDs. API keys are never shown in provider listings.
 
 ## v0.4.52 highlights

@@ -44,7 +44,6 @@ test("daemon launch applies ompLaunch options after the extension path", () => {
   assert.deepEqual(suffix, [
     "--skills", "git-*,docker",
     "--tools", "read,bash,edit,write",
-    "--approval-mode", "write",
     "--max-time", "30m",
     "--append-system-prompt", "keep tests green",
     "--add-dir", "/srv/project",
@@ -91,12 +90,16 @@ test("RPC and daemon launch share the same OMP policy arguments", () => {
     appendSystemPrompt: "keep tests green",
     addDirs: ["/srv/project"],
   };
-  assert.deepEqual(buildOmpLaunchArgs(launch), [
+  assert.deepEqual(buildOmpLaunchArgs(launch, true, true), [
     "--skills", "git-*",
     "--tools", "read,bash",
-    "--approval-mode", "write",
     "--max-time", "30m",
     "--append-system-prompt", "keep tests green",
     "--add-dir", "/srv/project",
   ]);
+});
+
+test("RPC launch ignores approval mode because RPC has no approval response channel", () => {
+  assert.deepEqual(buildOmpLaunchArgs({ approvalMode: "write", maxTime: "30m" }, true, true), ["--no-skills", "--max-time", "30m"]);
+  assert.deepEqual(buildOmpLaunchArgs({ approvalMode: "write" }), ["--no-skills", "--approval-mode", "write"]);
 });

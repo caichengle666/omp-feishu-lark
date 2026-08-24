@@ -86,7 +86,7 @@ export function buildDaemonSpec(input: DaemonSpecInput): DaemonSpec {
   const launch = input.ompLaunch;
   if (!launch?.enableSkills) daemonArgs.push("--no-skills");
   daemonArgs.push("--allow-home", "--cwd", input.workspace, "-e", input.extensionPath);
-  daemonArgs.push(...buildOmpLaunchArgs(launch, false));
+  daemonArgs.push(...buildOmpLaunchArgs(launch, false, true));
 
   const bunDir = dirname(input.bunBin);
   const homeDir = input.homeDir || homedir();
@@ -137,12 +137,12 @@ export function buildDaemonSpec(input: DaemonSpecInput): DaemonSpec {
   };
 }
 
-export function buildOmpLaunchArgs(launch?: OmpLaunchOptions, includeNoSkills = true): string[] {
+export function buildOmpLaunchArgs(launch?: OmpLaunchOptions, includeNoSkills = true, rpcMode = false): string[] {
   const args: string[] = [];
   if (includeNoSkills && !launch?.enableSkills) args.push("--no-skills");
   if (launch?.enableSkills && launch.skills?.length) args.push("--skills", launch.skills.join(","));
   if (launch?.tools?.length) args.push("--tools", launch.tools.join(","));
-  if (launch?.approvalMode) args.push("--approval-mode", launch.approvalMode);
+  if (!rpcMode && launch?.approvalMode) args.push("--approval-mode", launch.approvalMode);
   if (launch?.maxTime) args.push("--max-time", launch.maxTime);
   if (launch?.appendSystemPrompt) args.push("--append-system-prompt", launch.appendSystemPrompt);
   for (const dir of launch?.addDirs || []) args.push("--add-dir", dir);

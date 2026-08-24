@@ -28,7 +28,7 @@ export async function verifyRpcWorkerReady(options: RpcSelfTestOptions): Promise
     "--no-extensions",
     "--allow-home",
     "--cwd", options.workspace,
-    ...buildOmpLaunchArgs(options.ompLaunch),
+    ...buildOmpLaunchArgs(options.ompLaunch, true, true),
   ];
   const child = spawn(options.bunBin, args, {
     cwd: options.workspace,

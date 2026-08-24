@@ -64,7 +64,7 @@ export default function feishuExtension(pi: ExtensionAPI) {
     ? new FeishuRpcWorkerPool(({ cwd }) => new RpcClient({
         cwd,
         cliPath: ompCliPath,
-        args: ["--no-extensions", ...buildOmpLaunchArgs(bootConfig?.ompLaunch)],
+        args: ["--no-extensions", ...buildOmpLaunchArgs(bootConfig?.ompLaunch, true, true)],
       }))
     : undefined;
   const conversations = new ConversationManager(process.cwd(), bridge, {

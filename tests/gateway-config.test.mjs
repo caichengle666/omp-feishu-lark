@@ -69,6 +69,22 @@ test("gateway validation rejects unsafe names, URLs, and APIs", async () => {
   await assert.rejects(addProvider("edge", "https://api.example.test/#secret", "secret"), /片段/);
 });
 
+test("auto protocol detects OpenAI-compatible providers and persists the result", async () => {
+  const server = Bun.serve({ port: 0, fetch(request) {
+    assert.equal(new URL(request.url).pathname, "/v1/models");
+    return Response.json({ data: [{ id: "auto-model" }] });
+  } });
+  try {
+    mkdirSync(join(root, "agent"), { recursive: true });
+    await addProvider("auto", `http://127.0.0.1:${server.port}/v1`, "secret", "auto");
+    const config = Bun.YAML.parse(readFileSync(MODELS_PATH, "utf8"));
+    assert.equal(config.providers.auto.api, "openai-completions");
+    assert.deepEqual(config.providers.auto.discovery, { type: "openai-models-list", timeoutMs: 15000 });
+  } finally {
+    server.stop(true);
+  }
+});
+
 test("sync provider persists upstream models only for managed providers", async () => {
   const server = Bun.serve({
     port: 0,

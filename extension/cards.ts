@@ -128,7 +128,7 @@ export function buildHelpCard(options: HelpCardOptions) {
     ...(options.isAdmin
       ? [
           "`/feishu upgrade 0.4.60`：指定版本升级或降级",
-          "`/feishu provider add openai https://api.example.com/v1 sk-your-api-key openai-completions`：添加 Provider",
+          "`/feishu provider add openai https://api.example.com/v1 sk-your-api-key auto`：自动探测并添加 Provider",
           "`/feishu provider test openai`：测试 Provider",
           "`/feishu provider sync openai`：同步 Provider 模型",
           "`/feishu provider remove openai confirm`：确认删除 Provider",

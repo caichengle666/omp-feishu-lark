@@ -27,7 +27,7 @@ export function feishuHelpText(ompCommands?: ReadonlyArray<OmpCommandInfo>) {
     "/feishu debug - 查看最近的调试日志（管理员）",
     "/feishu refresh - 刷新 OMP 模型列表（管理员）",
     "/feishu provider list - 查看已配置 Provider（管理员）",
-    "/feishu provider add <名称> <baseUrl> <API Key> [api] [modelId...] - 添加或更新 Provider（管理员），例如：/feishu provider add openai https://api.example.com/v1 sk-your-api-key openai-completions",
+    "/feishu provider add <名称> <baseUrl> <API Key> [api] [modelId...] - 添加或更新 Provider（api 可用 auto 自动探测 OpenAI 协议；管理员），例如：/feishu provider add openai https://api.example.com/v1 sk-your-api-key auto",
     "/feishu provider test <名称> - 测试 Provider 或检查静态模型（管理员），例如：/feishu provider test openai",
     "/feishu provider sync <名称> - 同步已托管 Provider 的上游模型到 models.yml（管理员），例如：/feishu provider sync openai",
     "/feishu provider sync-all - 同步全部已托管 Provider（管理员）",
