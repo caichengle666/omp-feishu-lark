@@ -93,6 +93,7 @@ export class TaskStatusCard implements TaskStatusSink {
   private readonly startedAt = Date.now();
   private toolCalls = 0;
   private currentTool: string | undefined;
+  private ompStarted = false;
   private status: TaskStatus = "running";
   private heartbeat: NodeJS.Timeout | undefined;
   private lastUpdateAt = 0;
@@ -148,6 +149,10 @@ export class TaskStatusCard implements TaskStatusSink {
   updateFromEvent(event: unknown) {
     if (this.status !== "running") return;
     const raw = event as any;
+    if (raw?.type === "agent_start") {
+      if (this.ompStarted) return;
+      this.ompStarted = true;
+    }
     if (raw?.type === "tool_execution_start" || raw?.type === "tool_execution_end") {
       for (const candidate of collectArtifactCandidates(event, this.workspaceRoot)) {
         if (this.artifactPaths.size >= MAX_ARTIFACTS_PER_TASK && !this.artifactPaths.has(candidate.path)) break;
@@ -450,7 +455,7 @@ export function describeOmpEvent(event: unknown): string | undefined {
   const raw = event as any;
   switch (raw.type) {
     case "agent_start":
-      return "正在启动 OMP Agent";
+      return "OMP Agent 已启动";
     case "turn_start":
       return typeof raw.turnIndex === "number" ? `开始第 ${raw.turnIndex + 1} 轮处理` : "开始新一轮处理";
     case "message_start":

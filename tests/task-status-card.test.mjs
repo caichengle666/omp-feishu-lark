@@ -89,7 +89,7 @@ test("card actions are bound to the originating Feishu user and chat", () => {
 });
 
 test("OMP events are translated into readable Chinese phases", () => {
-  assert.equal(describeOmpEvent({ type: "agent_start" }), "正在启动 OMP Agent");
+  assert.equal(describeOmpEvent({ type: "agent_start" }), "OMP Agent 已启动");
   assert.equal(describeOmpEvent({ type: "turn_start", turnIndex: 1 }), "开始第 2 轮处理");
   assert.equal(describeOmpEvent({ type: "tool_execution_start", toolName: "bash" }), "正在执行工具：bash");
   assert.equal(describeOmpEvent({ type: "tool_execution_end", toolName: "bash", isError: true }), "工具 bash：执行失败");

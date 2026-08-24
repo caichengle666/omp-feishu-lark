@@ -53,7 +53,7 @@ export class FeishuRpcWorkerPool {
 
   constructor(
     private readonly createClient: RpcWorkerFactory,
-    private readonly limits: { maxWorkers?: number; idleTtlMs?: number } = {},
+    private readonly limits: { maxWorkers?: number; idleTtlMs?: number; startTimeoutMs?: number } = {},
   ) {}
 
   async prompt(key: string, options: RpcPromptOptions): Promise<RpcPromptResult> {
@@ -165,7 +165,7 @@ export class FeishuRpcWorkerPool {
     const slots = [...this.workers.entries()];
     this.workers.clear();
     while (this.capacityWaiters.length) this.capacityWaiters.shift()?.();
-    await Promise.allSettled(slots.map(([, slot]) => slot.client.stop()));
+    await Promise.allSettled(slots.map(([, slot]) => withTimeout(slot.client.stop(), 5_000, "OMP Agent 停止超时")));
   }
 
   private async ensureWorker(key: string, cwd: string, sessionFile?: string): Promise<WorkerSlot> {
@@ -188,9 +188,10 @@ export class FeishuRpcWorkerPool {
 
     try {
       if (!slot.startPromise) {
-        slot.startPromise = slot.client.start().then(async () => {
+        const startPromise = slot.client.start().then(async () => {
           if (sessionFile) await slot!.client.switchSession(sessionFile);
         });
+        slot.startPromise = withTimeout(startPromise, this.limits.startTimeoutMs ?? 60_000, "OMP Agent 启动超时");
       }
       await slot.startPromise;
       return slot;
@@ -203,7 +204,7 @@ export class FeishuRpcWorkerPool {
 
   private async dropWorker(key: string, slot: WorkerSlot): Promise<void> {
     if (this.workers.get(key) === slot) this.workers.delete(key);
-    try { await slot.client.stop(); } catch {}
+    try { await withTimeout(slot.client.stop(), 5_000, "OMP Agent 停止超时"); } catch {}
     this.releaseCapacityWaiter();
   }
 
@@ -233,6 +234,18 @@ export class FeishuRpcWorkerPool {
   private releaseCapacityWaiter() {
     this.capacityWaiters.shift()?.();
   }
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return promise;
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+    timer.unref?.();
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
 }
 
 function extractLastAssistantError(messages: readonly any[]) {

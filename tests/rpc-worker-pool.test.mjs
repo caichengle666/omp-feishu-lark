@@ -253,6 +253,19 @@ test("rebuilds a worker after startup fails", async () => {
   assert.equal(result.text, "reply:attempt-2");
 });
 
+test("fails and cleans up when worker startup hangs", async () => {
+  let stopped = 0;
+  const client = fakeClient("hung");
+  client.start = () => new Promise(() => {});
+  client.stop = async () => { stopped += 1; };
+  const pool = new FeishuRpcWorkerPool(() => client, { startTimeoutMs: 10 });
+  await assert.rejects(
+    pool.prompt("chat", { cwd: "a", text: "hello", images: [], timeoutMs: 1000 }),
+    /OMP Agent 启动超时/,
+  );
+  assert.equal(stopped, 1);
+});
+
 test("does not replay a submitted prompt after the worker crashes", async () => {
   let prompts = 0;
   const client = fakeClient("crash");

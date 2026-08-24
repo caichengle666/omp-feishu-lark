@@ -25,6 +25,12 @@ bugs here.
 - Provider synchronization checks the configuration fingerprint before writing results, so a slower request cannot overwrite a newer administrator edit.
 - Diagnostics now show when `approvalMode` is ignored by RPC mode, making the responsibility boundary with OMP upstream explicit.
 
+## v0.4.64 highlights
+
+- RPC worker startup now has a finite 60-second guard and cleans up hung workers instead of leaving tasks stuck during OMP initialization.
+- Worker shutdown has a bounded cleanup timeout, preventing failed workers from permanently occupying the pool.
+- Duplicate OMP startup events are ignored per task card and the status text now clearly distinguishes startup completion from a new processing turn.
+
 ## v0.4.60 highlights
 
 - Active Feishu task cards are persisted and recovered after daemon restarts.
