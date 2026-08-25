@@ -61,50 +61,42 @@ export type HelpActionSubmit = {
   chatId: string;
 };
 
-const HELP_RUN_BUTTONS: Array<{ label: string; command: string; type?: string }> = [
+const HELP_SESSION_BUTTONS: Array<{ label: string; command: string; type?: string }> = [
   { label: "新建会话", command: "new" },
   { label: "恢复历史", command: "resume" },
   { label: "选择模型", command: "model" },
   { label: "停止任务", command: "stop" },
-  { label: "自动压缩开", command: "autocompact on" },
-  { label: "自动压缩关", command: "autocompact off" },
-  { label: "压缩上下文", command: "compact" },
-  { label: "当前思考强度", command: "effort" },
-  { label: "OMP 命令说明", command: "commands" },
-  { label: "当前自动压缩", command: "autocompact" },
 ];
 
-const HELP_FILL_BUTTONS: Array<{ label: string; draft: string; adminOnly?: boolean }> = [
-  { label: "填入 /effort", draft: "/effort " },
-  { label: "填入 /compact", draft: "/compact " },
-  { label: "填入 /workspace", draft: "/workspace " },
-  { label: "填入 /send", draft: "/send " },
-  { label: "指定版本升/降级", draft: "/feishu upgrade ", adminOnly: true },
-  { label: "添加 Provider", draft: "/feishu provider add ", adminOnly: true },
-  { label: "测试 Provider", draft: "/feishu provider test ", adminOnly: true },
-  { label: "同步 Provider", draft: "/feishu provider sync ", adminOnly: true },
-  { label: "删除 Provider（需确认）", draft: "/feishu provider remove ", adminOnly: true },
-  { label: "确认重置插件", draft: "/feishu reset", adminOnly: true },
+const HELP_CONTEXT_BUTTONS: Array<{ label: string; command: string; type?: string }> = [
+  { label: "压缩上下文", command: "compact" },
+  { label: "自动压缩开", command: "autocompact on" },
+  { label: "自动压缩关", command: "autocompact off" },
+  { label: "当前自动压缩", command: "autocompact" },
 ];
 
 const HELP_QUERY_BUTTONS: Array<{ label: string; command: string; type?: string; adminOnly?: boolean }> = [
   { label: "诊断", command: "doctor" },
   { label: "版本", command: "version" },
   { label: "状态", command: "status" },
-  { label: "配置（管理员）", command: "feishu config", adminOnly: true },
-  { label: "日志（管理员）", command: "debug", adminOnly: true },
-  { label: "刷新模型（管理员）", command: "refresh", adminOnly: true },
-  { label: "Provider 列表（管理员）", command: "feishu provider list", adminOnly: true },
-  { label: "同步全部 Provider（管理员）", command: "feishu provider sync-all", adminOnly: true },
+  { label: "OMP 命令说明", command: "commands" },
 ];
 
-const HELP_ADMIN_BUTTONS: Array<{ label: string; command: string; type?: string }> = [
+const HELP_ADMIN_PLUGIN_BUTTONS: Array<{ label: string; command: string; type?: string }> = [
   { label: "启动", command: "feishu start" },
   { label: "停止", command: "feishu stop" },
   { label: "重启", command: "feishu restart" },
   { label: "自启动", command: "feishu autostart" },
-  { label: "Skill 开启", command: "feishu skills on" },
-  { label: "Skill 关闭", command: "feishu skills off" },
+];
+
+const HELP_ADMIN_SKILLS_BUTTONS: Array<{ label: string; command: string; type?: string; adminOnly?: boolean }> = [
+  { label: "Skill 开启", command: "feishu skills on", adminOnly: true },
+  { label: "Skill 关闭", command: "feishu skills off", adminOnly: true },
+  { label: "刷新模型", command: "refresh", adminOnly: true },
+  { label: "日志", command: "debug", adminOnly: true },
+  { label: "配置", command: "feishu config", adminOnly: true },
+  { label: "Provider 列表", command: "feishu provider list", adminOnly: true },
+  { label: "同步全部 Provider", command: "feishu provider sync-all", adminOnly: true },
 ];
 
 const HELP_EFFORT_BUTTONS: Array<{ label: string; command: string; type?: string }> = [
@@ -117,9 +109,24 @@ const HELP_EFFORT_BUTTONS: Array<{ label: string; command: string; type?: string
   { label: "极高", command: "effort xhigh" },
   { label: "最高", command: "effort max" },
 ];
+
+const HELP_FILL_BUTTONS: Array<{ label: string; draft: string; adminOnly?: boolean }> = [
+  { label: "填入 /effort", draft: "/effort " },
+  { label: "填入 /compact", draft: "/compact " },
+  { label: "填入 /workspace", draft: "/workspace ", adminOnly: true },
+  { label: "填入 /send", draft: "/send ", adminOnly: true },
+  { label: "指定版本升/降级", draft: "/feishu upgrade ", adminOnly: true },
+  { label: "添加 Provider", draft: "/feishu provider add ", adminOnly: true },
+  { label: "测试 Provider", draft: "/feishu provider test ", adminOnly: true },
+  { label: "同步 Provider", draft: "/feishu provider sync ", adminOnly: true },
+  { label: "删除 Provider（需确认）", draft: "/feishu provider remove ", adminOnly: true },
+  { label: "确认重置插件", draft: "/feishu reset", adminOnly: true },
+];
 export function buildHelpCard(options: HelpCardOptions) {
   const queryButtons = HELP_QUERY_BUTTONS.filter((entry) => options.isAdmin || !entry.adminOnly);
   const fillButtons = HELP_FILL_BUTTONS.filter((entry) => options.isAdmin || !entry.adminOnly);
+  const adminPluginButtons = HELP_ADMIN_PLUGIN_BUTTONS;
+  const adminSkillsButtons = HELP_ADMIN_SKILLS_BUTTONS.filter((entry) => options.isAdmin || !entry.adminOnly);
   const commandExamples = [
     "`/effort high`：切换思考强度",
     "`/compact 保留接口参数`：压缩时保留重点",
@@ -127,7 +134,7 @@ export function buildHelpCard(options: HelpCardOptions) {
     "`/send report.pdf`：发送工作区文件",
     ...(options.isAdmin
       ? [
-          "`/feishu upgrade 0.4.60`：指定版本升级或降级",
+          "`/feishu upgrade 0.4.xx`：指定版本升级或降级",
           "`/feishu provider add openai https://api.example.com/v1 sk-your-api-key auto`：自动探测并添加 Provider",
           "`/feishu provider test openai`：测试 Provider",
           "`/feishu provider sync openai`：同步 Provider 模型",
@@ -138,7 +145,20 @@ export function buildHelpCard(options: HelpCardOptions) {
   const adminElements = options.isAdmin
     ? [
         { tag: "markdown", content: "插件管理（管理员）：" },
-        ...buttonRow(HELP_ADMIN_BUTTONS.map((entry) => ({
+        ...buttonRow(adminPluginButtons.map((entry) => ({
+          label: entry.label,
+          type: entry.type,
+          value: {
+            action: "pi_feishu_help_run",
+            key: options.key,
+            chatType: options.chatType,
+            command: entry.command,
+            ownerOpenId: options.ownerOpenId,
+            chatId: options.chatId,
+          } satisfies HelpActionRun,
+        }))),
+        { tag: "markdown", content: "Skill 与模型管理（管理员）：" },
+        ...buttonRow(adminSkillsButtons.map((entry) => ({
           label: entry.label,
           type: entry.type,
           value: {
@@ -155,9 +175,29 @@ export function buildHelpCard(options: HelpCardOptions) {
   const elements: any[] = [
     {
       tag: "markdown",
-      content: "命令都做成按钮，手机上直接点；OMP 自带命令不能在飞书执行，不再展示。点击按钮执行常用操作，带参数的命令先填到下面输入框，补完参数后点 **执行**。",
+      content: "命令都做成按钮，手机上直接点。带参数的命令先填到下面输入框，补完参数后点 **执行**。",
     },
-    ...buttonRow(HELP_RUN_BUTTONS.map((entry) => ({
+    {
+      tag: "markdown",
+      content: "会话管理：",
+    },
+    ...buttonRow(HELP_SESSION_BUTTONS.map((entry) => ({
+      label: entry.label,
+      type: entry.type,
+      value: {
+        action: "pi_feishu_help_run",
+        key: options.key,
+        chatType: options.chatType,
+        command: entry.command,
+        ownerOpenId: options.ownerOpenId,
+        chatId: options.chatId,
+      } satisfies HelpActionRun,
+    }))),
+    {
+      tag: "markdown",
+      content: "上下文管理：",
+    },
+    ...buttonRow(HELP_CONTEXT_BUTTONS.map((entry) => ({
       label: entry.label,
       type: entry.type,
       value: {
@@ -279,8 +319,6 @@ export function buildHelpCard(options: HelpCardOptions) {
     },
   ];
 
-  elements.push({ tag: "markdown", content: "OMP 自带斜杠命令只能在本机 OMP 终端运行，飞书端不能直接执行，因此不在帮助卡片展示。" });
-
   return {
     schema: "2.0",
     config: { update_multi: true, width_mode: "fill" },
@@ -291,7 +329,6 @@ export function buildHelpCard(options: HelpCardOptions) {
     body: { elements },
   };
 }
-
 function buttonRow(buttons: Array<{ label: string; type?: string; value: Record<string, unknown> }>): any[] {
   const rows: any[][] = [];
   for (let index = 0; index < buttons.length; index += 3) {

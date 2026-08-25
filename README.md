@@ -25,6 +25,12 @@ bugs here.
 - Provider synchronization checks the configuration fingerprint before writing results, so a slower request cannot overwrite a newer administrator edit.
 - Diagnostics now show when `approvalMode` is ignored by RPC mode, making the responsibility boundary with OMP upstream explicit.
 
+## v0.4.65 highlights
+
+- Feishu help card is reorganized into categorized sections: session, context, thinking effort, queries, plugin admin, and Skill/model admin.
+- `/workspace` and `/send` fill buttons are marked admin-only so non-administrators no longer see commands they cannot run.
+- Hardcoded upgrade examples now use a generic `0.4.xx` placeholder instead of stale release numbers.
+
 ## v0.4.64 highlights
 
 - RPC worker startup now has a finite 60-second guard and cleans up hung workers instead of leaving tasks stuck during OMP initialization.

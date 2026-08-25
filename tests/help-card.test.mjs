@@ -12,7 +12,7 @@ const options = {
   draft: "/effort ",
 };
 
-test("help card uses JSON 2.0 with run, fill, and submit actions", () => {
+test("help card uses JSON 2.0 with categorized run, fill, and submit actions", () => {
   const card = buildHelpCard(options);
   const raw = JSON.stringify(card);
   assert.equal(card.schema, "2.0");
@@ -24,6 +24,12 @@ test("help card uses JSON 2.0 with run, fill, and submit actions", () => {
   assert.match(raw, /"default_value":"\/effort "/);
   assert.match(raw, /"command":"doctor"/);
   assert.match(raw, /"draft":"\/workspace "/);
+  assert.match(raw, /会话管理：/);
+  assert.match(raw, /上下文管理：/);
+  assert.match(raw, /思考强度：/);
+  assert.match(raw, /查询与状态：/);
+  assert.match(raw, /插件管理（管理员）：/);
+  assert.match(raw, /Skill 与模型管理（管理员）：/);
   assert.match(raw, /指定版本升\/降级/);
   assert.match(raw, /添加 Provider/);
   assert.match(raw, /测试 Provider/);
@@ -39,17 +45,17 @@ test("help card uses JSON 2.0 with run, fill, and submit actions", () => {
   assert.match(raw, /Skill 开启/);
   assert.match(raw, /Skill 关闭/);
   assert.doesNotMatch(raw, /\/review/);
-  assert.match(raw, /OMP 自带斜杠命令/);
 });
 
 test("non-admin help cards hide administrator-only actions", () => {
   const raw = JSON.stringify(buildHelpCard({ ...options, isAdmin: false }));
   assert.doesNotMatch(raw, /插件管理（管理员）/);
-  assert.doesNotMatch(raw, /配置（管理员）/);
-  assert.doesNotMatch(raw, /日志（管理员）/);
-  assert.doesNotMatch(raw, /刷新模型（管理员）/);
+  assert.doesNotMatch(raw, /Skill 与模型管理（管理员）/);
+  assert.doesNotMatch(raw, /配置/);
+  assert.doesNotMatch(raw, /日志/);
+  assert.doesNotMatch(raw, /刷新模型/);
   assert.doesNotMatch(raw, /添加 Provider/);
-  assert.doesNotMatch(raw, /Provider 列表（管理员）/);
+  assert.doesNotMatch(raw, /Provider 列表/);
   assert.doesNotMatch(raw, /Skill 开启/);
   assert.doesNotMatch(raw, /Skill 关闭/);
   assert.match(raw, /诊断/);

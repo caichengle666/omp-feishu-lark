@@ -259,7 +259,7 @@ export class FeishuMessageHandler {
     }
 
     if (command.name === "commands") {
-      await transport.replyText(msg.messageId, "OMP 自带命令只支持在本机 OMP 终端运行，飞书端不能直接执行，因此不在帮助卡片展示。");
+      await transport.replyText(msg.messageId, "OMP 自带命令中，/new、/model、/compact、/effort、/stop、/autocompact 等已可在飞书直接执行；需要终端交互的命令（如 /export、/share、/init、/session 等）仍需在 OMP 终端运行。");
       return true;
     }
 
