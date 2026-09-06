@@ -1,8 +1,7 @@
 import { RpcClient } from "@oh-my-pi/pi-coding-agent/modes/rpc/rpc-client";
 import type { ThinkingLevel } from "@oh-my-pi/pi-agent-core";
+import type { AgentBackend, AgentCompactOptions, AgentPromptOptions, AgentPromptResult } from "./agent-backend.js";
 import { debugLog } from "./debug.js";
-import type { TaskStatusSink } from "./task-status-card.js";
-import type { FeishuThinkingLevel } from "./types.js";
 
 type RpcWorkerCore = Pick<RpcClient,
   "start" | "stop" | "promptAndWait" | "abort" | "getState" | "getLastAssistantText" | "getMessages" | "setModel" | "switchSession" | "onSessionEvent"
@@ -24,27 +23,12 @@ type WorkerSlot = {
   lastUsedAt: number;
 };
 
-export type RpcPromptOptions = {
-  cwd: string;
-  sessionFile?: string;
-  model?: { provider: string; id: string };
-  thinkingLevel?: FeishuThinkingLevel;
-  autoCompaction?: boolean;
-  text: string;
-  images: Array<{ type: "image"; data: string; mimeType: string }>;
-  timeoutMs: number;
-  status?: TaskStatusSink;
-  onSessionReady?: (sessionId: string) => void;
-  onSessionEvent?: (sessionId: string, event: any) => void;
-};
+export type RpcPromptOptions = AgentPromptOptions;
 
-export type RpcPromptResult = {
-  text: string;
-  error?: string;
-  sessionFile?: string;
-};
+export type RpcPromptResult = AgentPromptResult;
 
-export class FeishuRpcWorkerPool {
+export class FeishuRpcWorkerPool implements AgentBackend {
+  readonly name = "omp";
   private readonly workers = new Map<string, WorkerSlot>();
   private readonly activePromptKeys = new Set<string>();
   private readonly abortRequested = new Set<string>();
@@ -145,7 +129,7 @@ export class FeishuRpcWorkerPool {
     if (slot) await this.dropWorker(key, slot);
   }
 
-  async compact(key: string, options: { cwd: string; sessionFile?: string; instructions?: string; autoCompaction?: boolean }) {
+  async compact(key: string, options: AgentCompactOptions) {
     const slot = await this.ensureWorker(key, options.cwd, options.sessionFile);
     if (options.autoCompaction !== undefined) {
       if (!slot.client.setAutoCompaction) throw new Error("当前 OMP 不支持自动压缩开关。");

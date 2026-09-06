@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, chmodSync, renameSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import type { CardActionMode, Domain, FeishuConfig, FeishuOmpLaunch, GroupPolicy, OmpApprovalMode } from "./types.js";
+import type { CardActionMode, Domain, FeishuAgentBackend, FeishuConfig, FeishuOmpLaunch, GroupPolicy, OmpApprovalMode } from "./types.js";
 import { getAgentDir } from "@oh-my-pi/pi-coding-agent";
 
 // This is an OMP extension. OMP owns profile resolution; use its canonical
@@ -108,6 +108,9 @@ export function loadConfig(): FeishuConfig | undefined {
       promptNotifySec: parseEnvSeconds(process.env.FEISHU_PROMPT_NOTIFY_SEC) ?? DEFAULT_CONFIG.promptNotifySec,
       promptTimeoutSec: parseEnvSeconds(process.env.FEISHU_PROMPT_TIMEOUT_SEC) ?? DEFAULT_CONFIG.promptTimeoutSec,
       promptTimeoutEnabled: parseEnvBoolean(process.env.FEISHU_PROMPT_TIMEOUT_ENABLED) ?? DEFAULT_CONFIG.promptTimeoutEnabled,
+      agentBackend: parseAgentBackend(process.env.FEISHU_AGENT_BACKEND),
+      dshProvider: process.env.FEISHU_DSH_PROVIDER?.trim() || undefined,
+      dshModel: process.env.FEISHU_DSH_MODEL?.trim() || undefined,
       ompLaunch: parseOmpLaunchEnv(),
     });
   }
@@ -135,8 +138,15 @@ export function loadConfig(): FeishuConfig | undefined {
     promptNotifySec: numberOr(cfg.promptNotifySec, DEFAULT_CONFIG.promptNotifySec),
     promptTimeoutSec: numberOr(cfg.promptTimeoutSec, DEFAULT_CONFIG.promptTimeoutSec),
     promptTimeoutEnabled: cfg.promptTimeoutEnabled ?? DEFAULT_CONFIG.promptTimeoutEnabled,
+    agentBackend: parseAgentBackend(cfg.agentBackend),
+    dshProvider: typeof cfg.dshProvider === "string" && cfg.dshProvider.trim() ? cfg.dshProvider.trim() : undefined,
+    dshModel: typeof cfg.dshModel === "string" && cfg.dshModel.trim() ? cfg.dshModel.trim() : undefined,
     ompLaunch: normalizeOmpLaunch(cfg.ompLaunch),
   });
+}
+
+function parseAgentBackend(value: unknown): FeishuAgentBackend | undefined {
+  return value === "dsh" || value === "omp" ? value : undefined;
 }
 
 export function validateConfig(value: unknown): FeishuConfig | undefined {

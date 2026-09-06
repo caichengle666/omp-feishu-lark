@@ -1,6 +1,7 @@
 export type Domain = "feishu" | "lark";
 export type GroupPolicy = "open" | "mention";
 export type CardActionMode = "webhook" | "ws";
+export type FeishuAgentBackend = "omp" | "dsh";
 
 export type OmpApprovalMode = "always-ask" | "write" | "yolo";
 
@@ -48,6 +49,12 @@ export type FeishuConfig = {
   promptTimeoutSec?: number;
   /** Explicit opt-in for the hard prompt timeout. Old configs without this flag remain unlimited. */
   promptTimeoutEnabled?: boolean;
+  /** Agent runtime used by the Feishu bridge. OMP remains the default. */
+  agentBackend?: FeishuAgentBackend;
+  /** DSH model provider route used when the DSH backend is selected. */
+  dshProvider?: string;
+  /** DSH model id used when the DSH backend is selected. */
+  dshModel?: string;
   ompLaunch?: FeishuOmpLaunch;
 };
 

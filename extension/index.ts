@@ -16,6 +16,7 @@ import { FeishuBridgeRuntime } from "./bridge-runtime.js";
 import { FeishuBridgeStore } from "./bridge-store.js";
 import { ConversationManager } from "./conversation-manager.js";
 import { FeishuRpcWorkerPool } from "./rpc-worker-pool.js";
+import { DshSdkBackend } from "./dsh-sdk-backend.js";
 import { FeishuDelivery } from "./delivery.js";
 import { feishuHelpText } from "./help.js";
 import { FeishuNotificationWebhook } from "./notification-webhook.js";
@@ -60,8 +61,10 @@ export default function feishuExtension(pi: ExtensionAPI) {
   const bridge = new FeishuBridgeRuntime(bridgeStore, delivery);
   const bootConfig = loadConfig();
   const ompCliPath = resolveOmpCliPath();
-  const rpcWorkers = process.env.PI_FEISHU_DAEMON === "1"
-    ? new FeishuRpcWorkerPool(({ cwd }) => new RpcClient({
+  const agentBackend = process.env.PI_FEISHU_DAEMON === "1"
+    ? bootConfig?.agentBackend === "dsh"
+      ? new DshSdkBackend(undefined, undefined, bootConfig?.dshProvider, bootConfig?.dshModel)
+      : new FeishuRpcWorkerPool(({ cwd }) => new RpcClient({
         cwd,
         cliPath: ompCliPath,
         args: ["--no-extensions", ...buildOmpLaunchArgs(bootConfig?.ompLaunch, true, true)],
@@ -71,7 +74,7 @@ export default function feishuExtension(pi: ExtensionAPI) {
     promptNotifySec: bootConfig?.promptNotifySec,
     promptTimeoutSec: bootConfig?.promptTimeoutSec,
     promptTimeoutEnabled: bootConfig?.promptTimeoutEnabled,
-  }, rpcWorkers);
+  }, agentBackend);
   const messageHandler = new FeishuMessageHandler(conversations, () => transport, bridgeStore, {
     doctor: (detailed = true) => doctorReport(detailed),
     version: (detailed = true) => versionReport(detailed),
@@ -230,6 +233,7 @@ export default function feishuExtension(pi: ExtensionAPI) {
       `Admins: ${(cfg.adminOpenIds || []).join(", ") || "none"}`,
       `Auto start: ${cfg.autoStart !== false ? "on" : "off"}`,
       `OMP skills: ${cfg.ompLaunch?.enableSkills === true ? "on" : "off"}${cfg.ompLaunch?.skills?.length ? ` (${cfg.ompLaunch.skills.join(", ")})` : ""}`,
+      `Agent backend: ${cfg.agentBackend || "omp"}${cfg.agentBackend === "dsh" ? ` (${cfg.dshProvider || "deepseek-official"}/${cfg.dshModel || "deepseek-v4-flash"})` : ""}`,
       `OMP approval: ${cfg.ompLaunch?.approvalMode ? `${cfg.ompLaunch.approvalMode}（RPC 模式忽略交互审批）` : "RPC 安全模式"}`,
       `Prompt notice: ${cfg.promptNotifySec || 0}s`,
       `Notification webhook: ${cfg.notificationWebhookEnabled ? "enabled" : "disabled"}`,
@@ -501,7 +505,7 @@ export default function feishuExtension(pi: ExtensionAPI) {
     notificationWebhook = undefined;
     await transport?.stop();
     transport = undefined;
-    await rpcWorkers?.disposeAll();
+    await agentBackend?.disposeAll();
     await gatewayLock?.release();
     gatewayLock = undefined;
     updateStatus(loadConfig() ? "disconnected" : "not configured");

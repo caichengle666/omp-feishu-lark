@@ -31,6 +31,13 @@ bugs here.
 - `/workspace` and `/send` fill buttons are marked admin-only so non-administrators no longer see commands they cannot run.
 - Hardcoded upgrade examples now use a generic `0.4.xx` placeholder instead of stale release numbers.
 
+## v0.4.66 highlights
+
+- Adds a modular Agent backend layer with OMP and DeepSeek Harness support.
+- DSH conversations support native prompt cancellation, model configuration,
+  manual compaction, and command discovery through the SDK protocol.
+- The selected `/model` route is passed through to the active DSH session.
+
 ## v0.4.64 highlights
 
 - RPC worker startup now has a finite 60-second guard and cleans up hung workers instead of leaving tasks stuck during OMP initialization.
@@ -324,6 +331,28 @@ Environment-only configurations can use `FEISHU_OMP_ENABLE_SKILLS`,
 `FEISHU_OMP_SKILLS`, `FEISHU_OMP_TOOLS`, `FEISHU_OMP_APPROVAL_MODE`,
 `FEISHU_OMP_MAX_TIME`, `FEISHU_OMP_APPEND_SYSTEM_PROMPT`, and
 `FEISHU_OMP_ADD_DIRS`. List values are comma-separated.
+
+### Agent backends
+
+The Feishu layer has a backend interface so different agent runtimes can share
+the same transport, permissions, cards, and conversation routing. OMP remains
+the default. To run each Feishu conversation in a DeepSeek Harness SDK runtime,
+set this in `~/.omp/agent/feishu/config.json`:
+
+```json
+{
+  "agentBackend": "dsh",
+  "dshProvider": "deepseek-official",
+  "dshModel": "deepseek-v4-flash"
+}
+```
+
+The DSH backend starts one `dsh --profile sdk` child per Feishu conversation.
+Set `FEISHU_DSH_COMMAND` when `dsh` is not on PATH, and
+`FEISHU_DSH_ARGS` when a different DSH profile or launch arguments are needed.
+The DSH backend maps `/model`, `/compact`, `/commands`, and `/stop` to the DSH
+SDK protocol equivalents. The backend currently starts one `dsh --profile sdk`
+runtime per Feishu conversation.
 
 ### Commands
 

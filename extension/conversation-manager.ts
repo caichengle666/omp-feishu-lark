@@ -11,13 +11,13 @@ import {
   SessionManager,
 } from "@oh-my-pi/pi-coding-agent";
 import type { FeishuBridgeRuntime } from "./bridge-runtime.js";
+import type { AgentBackend } from "./agent-backend.js";
 import { ensureRoot, readJson, STATE_PATH, writeJson } from "./config.js";
 import { debugLog } from "./debug.js";
 import { waitForPrompt } from "./prompt-timeout.js";
 import type { ResumeScope, ResumeSessionPage } from "./cards.js";
 import type { TaskStatusSink } from "./task-status-card.js";
 import type { FeishuState, FeishuThinkingLevel } from "./types.js";
-import type { FeishuRpcWorkerPool } from "./rpc-worker-pool.js";
 
 type ActiveRun = {
   session?: AgentSession;
@@ -57,7 +57,7 @@ export class ConversationManager {
     private readonly cwd: string,
     private readonly bridge?: FeishuBridgeRuntime,
     private readonly timeouts: ConversationTimeouts = {},
-    private readonly rpcWorkers?: FeishuRpcWorkerPool,
+    private readonly agentBackend?: AgentBackend,
   ) {
     ensureRoot();
     this.state = readJson<FeishuState>(STATE_PATH, { sessions: {} });
@@ -95,7 +95,7 @@ export class ConversationManager {
     status?: TaskStatusSink,
   ) {
     if (this.activeRuns.has(key)) void status?.setPhase?.("正在排队等待上一项任务完成");
-    if (this.rpcWorkers) return this.promptWithRpcWorker(key, userText, images, onReply, status);
+    if (this.agentBackend) return this.promptWithBackend(key, userText, images, onReply, status);
     const previous = this.previousTurn(key);
     const next = previous.then(async () => {
       debugLog("feishu.prompt.start", { key, textLength: userText.length, imageCount: images.length });
@@ -186,7 +186,7 @@ export class ConversationManager {
         try { (await cached).dispose(); } catch {}
       }
       this.sessions.delete(key);
-      await this.rpcWorkers?.reset(key);
+      await this.agentBackend?.reset(key);
       this.rememberSession(key, this.state.sessions[key]);
       delete this.state.sessions[key];
       writeJson(STATE_PATH, this.state);
@@ -263,7 +263,7 @@ export class ConversationManager {
       }
 
       this.sessions.delete(key);
-      await this.rpcWorkers?.reset(key);
+      await this.agentBackend?.reset(key);
       this.setCurrentSession(key, sessionPath);
       this.state.workspaces![key] = sessionInfo.cwd || this.cwd;
       writeJson(STATE_PATH, this.state);
@@ -315,7 +315,7 @@ export class ConversationManager {
         try { (await cached).dispose(); } catch {}
       }
       this.sessions.delete(key);
-      await this.rpcWorkers?.reset(key);
+      await this.agentBackend?.reset(key);
       await onReply(`已切换思考强度为 ${level}，后续任务生效。`);
     }).catch(async (error) => {
       await onReply(`OMP error: ${error instanceof Error ? error.message : String(error)}`);
@@ -354,8 +354,8 @@ export class ConversationManager {
     const previous = this.previousTurn(key);
     const next = previous.then(async () => {
       const autoCompaction = this.getAutoCompaction(key);
-      const result = this.rpcWorkers
-        ? await this.rpcWorkers.compact(key, {
+      const result = this.agentBackend?.compact
+        ? await this.agentBackend.compact(key, {
             cwd: this.getWorkspace(key),
             sessionFile: this.state.sessions[key],
             instructions,
@@ -371,8 +371,8 @@ export class ConversationManager {
   }
 
   async listOmpCommands(key: string) {
-    if (!this.rpcWorkers) return [];
-    return this.rpcWorkers.availableCommands(key, {
+    if (!this.agentBackend?.availableCommands) return [];
+    return this.agentBackend.availableCommands(key, {
       cwd: this.getWorkspace(key),
       sessionFile: this.state.sessions[key],
     });
@@ -405,7 +405,7 @@ export class ConversationManager {
         try { (await cached).dispose(); } catch {}
       }
       this.sessions.delete(key);
-      await this.rpcWorkers?.reset(key);
+      await this.agentBackend?.reset(key);
       this.rememberSession(key, this.state.sessions[key]);
       delete this.state.sessions[key];
       this.state.workspaces![key] = workspace;
@@ -479,7 +479,7 @@ export class ConversationManager {
   }
 
   resetMemory() {
-    void this.rpcWorkers?.disposeAll();
+    void this.agentBackend?.disposeAll();
     for (const session of this.sessions.values()) {
       void session.then((s) => s.dispose()).catch(() => undefined);
     }
@@ -595,7 +595,7 @@ export class ConversationManager {
     return session;
   }
 
-  private async promptWithRpcWorker(
+  private async promptWithBackend(
     key: string,
     userText: string,
     images: Array<{ type: "image"; data: string; mimeType: string }>,
@@ -605,11 +605,11 @@ export class ConversationManager {
     const previous = this.previousTurn(key);
     const next = previous.then(async () => {
       debugLog("feishu.rpc_prompt.start", { key, textLength: userText.length, imageCount: images.length });
-      const run: ActiveRun = { runId: status?.runId, stopped: false, status, abort: async () => { await this.rpcWorkers!.abort(key); } };
+      const run: ActiveRun = { runId: status?.runId, stopped: false, status, abort: async () => { await this.agentBackend!.abort(key); } };
       this.activeRuns.set(key, run);
       const model = await this.resolveSelectedModel(key, false);
       let sessionId: string | undefined;
-      const result = await this.rpcWorkers!.prompt(key, {
+      const result = await this.agentBackend!.prompt(key, {
         cwd: this.getWorkspace(key),
         sessionFile: this.state.sessions[key],
         model: model ? { provider: model.provider, id: model.id } : undefined,
@@ -626,7 +626,7 @@ export class ConversationManager {
           this.bridge?.beginFeishuInput(id);
         },
         onSessionEvent: (id, event) => {
-          if (event?.type === "message_end") this.bridge?.handleMessageEnd(id, key, event.message);
+          if (isMessageEndEvent(event)) this.bridge?.handleMessageEnd(id, key, event.message);
         },
       });
       if (sessionId) this.bridge?.endFeishuInput(sessionId);
@@ -873,4 +873,8 @@ function formatModifiedLabel(value: Date | string) {
 function toTimeMs(value: Date | string) {
   const date = value instanceof Date ? value : new Date(value);
   return Number.isNaN(date.getTime()) ? 0 : date.getTime();
+}
+
+function isMessageEndEvent(value: unknown): value is { type: "message_end"; message: unknown } {
+  return Boolean(value && typeof value === "object" && (value as { type?: unknown }).type === "message_end");
 }
