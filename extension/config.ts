@@ -146,7 +146,7 @@ export function loadConfig(): FeishuConfig | undefined {
 }
 
 function parseAgentBackend(value: unknown): FeishuAgentBackend | undefined {
-  return value === "dsh" || value === "omp" ? value : undefined;
+  return value === "auto" || value === "dsh" || value === "omp" ? value : undefined;
 }
 
 export function validateConfig(value: unknown): FeishuConfig | undefined {
@@ -192,6 +192,9 @@ export function validateConfig(value: unknown): FeishuConfig | undefined {
     promptNotifySec,
     promptTimeoutSec,
     promptTimeoutEnabled: typeof raw.promptTimeoutEnabled === "boolean" ? raw.promptTimeoutEnabled : DEFAULT_CONFIG.promptTimeoutEnabled,
+    agentBackend: parseAgentBackend(raw.agentBackend),
+    dshProvider: typeof raw.dshProvider === "string" && raw.dshProvider.trim() ? raw.dshProvider.trim() : undefined,
+    dshModel: typeof raw.dshModel === "string" && raw.dshModel.trim() ? raw.dshModel.trim() : undefined,
     ompLaunch: normalizeOmpLaunch(raw.ompLaunch),
   };
 }

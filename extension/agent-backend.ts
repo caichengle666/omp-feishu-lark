@@ -6,6 +6,8 @@ export type AgentModel = {
   id: string;
 };
 
+export type AgentModelOption = AgentModel;
+
 export type AgentImage = {
   type: "image";
   data: string;
@@ -43,6 +45,7 @@ export type AgentCompactOptions = {
 export interface AgentBackend {
   readonly name: string;
   prompt(key: string, options: AgentPromptOptions): Promise<AgentPromptResult>;
+  getAvailableModels?(): Promise<AgentModelOption[]>;
   abort(key: string): Promise<boolean>;
   reset(key: string): Promise<void>;
   compact?(key: string, options: AgentCompactOptions): Promise<unknown>;

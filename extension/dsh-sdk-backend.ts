@@ -6,17 +6,26 @@ import { debugLog } from "./debug.js";
 type JsonRpcResponse = { id?: number; result?: unknown; error?: { message?: string } };
 type DshNotification = { method?: string; params?: Record<string, unknown> };
 
+type ActiveRun = {
+  accepted: boolean;
+  sawRunning: boolean;
+  resolve: () => void;
+  reject: (error: Error) => void;
+  timer?: NodeJS.Timeout;
+};
+
 type DshSession = {
   process: ChildProcessWithoutNullStreams;
   nextId: number;
   pending: Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>;
   sessionId: string;
   latestText: string;
-  idleWaiters: Array<() => void>;
   onEvent?: (sessionId: string, event: unknown) => void;
   closed: boolean;
   provider: string;
   model: string;
+  status?: "idle" | "running";
+  activeRun?: ActiveRun;
 };
 
 /** DSH SDK JSON-RPC backend. One child runtime owns one Feishu conversation. */
@@ -31,6 +40,10 @@ export class DshSdkBackend implements AgentBackend {
     private readonly model = process.env.FEISHU_DSH_MODEL || "deepseek-v4-flash",
   ) {}
 
+  async getAvailableModels() {
+    return [{ provider: this.provider, id: this.model }];
+  }
+
   async prompt(key: string, options: AgentPromptOptions): Promise<AgentPromptResult> {
     const session = await this.ensureSession(key, options);
     const provider = options.model?.provider || this.provider;
@@ -40,19 +53,28 @@ export class DshSdkBackend implements AgentBackend {
       session.provider = provider;
       session.model = model;
     }
-    session.onEvent = options.onSessionEvent
+    session.onEvent = options.onSessionEvent;
+    session.latestText = "";
     options.onSessionReady?.(session.sessionId);
-    const result = await this.request(session, "session/prompt", {
-      sessionId: session.sessionId,
-      contentBlocks: [
-        { type: "text", text: options.text },
-        ...options.images.map((image) => ({ type: "image", data: image.data, mimeType: image.mimeType })),
-      ],
-    });
-    if (!isRecord(result) || typeof result.messageId !== "string") {
-      throw new Error("DSH session/prompt returned no message id");
+    const completion = this.waitForPromptCompletion(session, options.timeoutMs);
+    try {
+      const result = await this.request(session, "session/prompt", {
+        sessionId: session.sessionId,
+        contentBlocks: [
+          { type: "text", text: options.text },
+          ...options.images.map((image) => ({ type: "image", data: image.data, mimeType: image.mimeType })),
+        ],
+      });
+      if (!isRecord(result) || typeof result.messageId !== "string") {
+        throw new Error("DSH session/prompt returned no message id");
+      }
+      if (session.activeRun) session.activeRun.accepted = true;
+      this.resolveIfComplete(session);
+      await completion;
+    } catch (error) {
+      this.clearActiveRun(session);
+      throw error;
     }
-    await this.waitForIdle(session, options.timeoutMs);
     return { text: session.latestText };
   }
 
@@ -60,6 +82,7 @@ export class DshSdkBackend implements AgentBackend {
     const session = this.sessions.get(key);
     if (!session) return false;
     await this.request(session, "session/cancel", { sessionId: session.sessionId });
+    this.rejectActiveRun(session, new Error("DSH task cancelled"));
     return true;
   }
 
@@ -98,7 +121,6 @@ export class DshSdkBackend implements AgentBackend {
       pending: new Map(),
       sessionId: `feishu-${stableId(key)}`,
       latestText: "",
-      idleWaiters: [],
       closed: false,
       provider: options.model?.provider || this.provider,
       model: options.model?.id || this.model,
@@ -136,8 +158,12 @@ export class DshSdkBackend implements AgentBackend {
     }
     if (frame.method !== "session.event" && frame.method !== "session.status") return;
     const params = frame.params || {};
-    if (frame.method === "session.status" && params.status === "idle") {
-      for (const resolve of session.idleWaiters.splice(0)) resolve();
+    if (params.sessionId !== session.sessionId) return;
+    if (frame.method === "session.status") {
+      if (params.status !== "idle" && params.status !== "running") return;
+      session.status = params.status;
+      if (params.status === "running" && session.activeRun) session.activeRun.sawRunning = true;
+      if (params.status === "idle") this.resolveIfComplete(session);
     }
     if (frame.method === "session.event") {
       const event = params.event;
@@ -155,20 +181,52 @@ export class DshSdkBackend implements AgentBackend {
     });
   }
 
-  private async waitForIdle(session: DshSession, timeoutMs: number) {
-    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs >= 2_147_483_647) {
-      await new Promise<void>((resolve) => session.idleWaiters.push(resolve));
-      return;
-    }
-    await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error("DSH agent wait timed out")), timeoutMs);
-      session.idleWaiters.push(() => { clearTimeout(timer); resolve(); });
+  private waitForPromptCompletion(session: DshSession, timeoutMs: number): Promise<void> {
+    if (session.activeRun) throw new Error("DSH session is already processing");
+    return new Promise<void>((resolve, reject) => {
+      const activeRun: ActiveRun = { accepted: false, sawRunning: false, resolve, reject };
+      session.activeRun = activeRun;
+      if (Number.isFinite(timeoutMs) && timeoutMs > 0 && timeoutMs < 2_147_483_647) {
+        activeRun.timer = setTimeout(() => {
+          this.rejectActiveRun(session, new Error("DSH agent wait timed out"));
+          void this.request(session, "session/cancel", { sessionId: session.sessionId }).catch(() => undefined);
+        }, timeoutMs);
+      }
     });
+  }
+
+  private resolveActiveRun(session: DshSession) {
+    const activeRun = session.activeRun;
+    if (!activeRun) return;
+    this.clearActiveRun(session);
+    activeRun.resolve();
+  }
+
+  private resolveIfComplete(session: DshSession) {
+    const activeRun = session.activeRun;
+    if (activeRun?.accepted && activeRun.sawRunning && session.status === "idle") {
+      this.resolveActiveRun(session);
+    }
+  }
+
+  private rejectActiveRun(session: DshSession, error: Error) {
+    const activeRun = session.activeRun;
+    if (!activeRun) return;
+    this.clearActiveRun(session);
+    activeRun.reject(error);
+  }
+
+  private clearActiveRun(session: DshSession) {
+    const activeRun = session.activeRun;
+    if (!activeRun) return;
+    if (activeRun.timer) clearTimeout(activeRun.timer);
+    session.activeRun = undefined;
   }
 
   private async closeSession(key: string, session: DshSession) {
     session.closed = true;
     if (this.sessions.get(key) === session) this.sessions.delete(key);
+    this.rejectActiveRun(session, new Error("DSH runtime closed"));
     try { await this.request(session, "shutdown", {}); } catch {}
     try { session.process.stdin.end(); } catch {}
     if (!session.process.killed) session.process.kill();
@@ -179,9 +237,9 @@ export class DshSdkBackend implements AgentBackend {
   private failSession(session: DshSession, error: Error) {
     if (session.closed) return;
     session.closed = true;
+    this.rejectActiveRun(session, error);
     for (const pending of session.pending.values()) pending.reject(error);
     session.pending.clear();
-    for (const resolve of session.idleWaiters.splice(0)) resolve();
   }
 }
 

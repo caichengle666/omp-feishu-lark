@@ -15,6 +15,7 @@ import { recoverOrphanDaemon } from "../src/orphan-recovery.js";
 import { FeishuBridgeRuntime } from "./bridge-runtime.js";
 import { FeishuBridgeStore } from "./bridge-store.js";
 import { ConversationManager } from "./conversation-manager.js";
+import { resolveAgentBackend } from "./backend-resolver.js";
 import { FeishuRpcWorkerPool } from "./rpc-worker-pool.js";
 import { DshSdkBackend } from "./dsh-sdk-backend.js";
 import { FeishuDelivery } from "./delivery.js";
@@ -60,15 +61,19 @@ export default function feishuExtension(pi: ExtensionAPI) {
   const delivery = new FeishuDelivery(() => transport);
   const bridge = new FeishuBridgeRuntime(bridgeStore, delivery);
   const bootConfig = loadConfig();
-  const ompCliPath = resolveOmpCliPath();
+  const resolvedBackend = resolveAgentBackend(bootConfig?.agentBackend);
+  let ompCliPath: string | undefined;
+  const getOmpCliPath = () => ompCliPath ||= resolveOmpCliPath();
   const agentBackend = process.env.PI_FEISHU_DAEMON === "1"
-    ? bootConfig?.agentBackend === "dsh"
+    ? resolvedBackend === "dsh"
       ? new DshSdkBackend(undefined, undefined, bootConfig?.dshProvider, bootConfig?.dshModel)
-      : new FeishuRpcWorkerPool(({ cwd }) => new RpcClient({
-        cwd,
-        cliPath: ompCliPath,
-        args: ["--no-extensions", ...buildOmpLaunchArgs(bootConfig?.ompLaunch, true, true)],
-      }))
+      : new FeishuRpcWorkerPool(({ cwd }) => {
+        return new RpcClient({
+          cwd,
+          cliPath: getOmpCliPath(),
+          args: ["--no-extensions", ...buildOmpLaunchArgs(bootConfig?.ompLaunch, true, true)],
+        });
+      })
     : undefined;
   const conversations = new ConversationManager(process.cwd(), bridge, {
     promptNotifySec: bootConfig?.promptNotifySec,
@@ -233,7 +238,7 @@ export default function feishuExtension(pi: ExtensionAPI) {
       `Admins: ${(cfg.adminOpenIds || []).join(", ") || "none"}`,
       `Auto start: ${cfg.autoStart !== false ? "on" : "off"}`,
       `OMP skills: ${cfg.ompLaunch?.enableSkills === true ? "on" : "off"}${cfg.ompLaunch?.skills?.length ? ` (${cfg.ompLaunch.skills.join(", ")})` : ""}`,
-      `Agent backend: ${cfg.agentBackend || "omp"}${cfg.agentBackend === "dsh" ? ` (${cfg.dshProvider || "deepseek-official"}/${cfg.dshModel || "deepseek-v4-flash"})` : ""}`,
+      `Agent backend: ${cfg.agentBackend || "omp"} (resolved: ${resolveAgentBackend(cfg.agentBackend)})${cfg.agentBackend === "dsh" || cfg.agentBackend === "auto" ? ` (${cfg.dshProvider || "deepseek-official"}/${cfg.dshModel || "deepseek-v4-flash"})` : ""}`,
       `OMP approval: ${cfg.ompLaunch?.approvalMode ? `${cfg.ompLaunch.approvalMode}（RPC 模式忽略交互审批）` : "RPC 安全模式"}`,
       `Prompt notice: ${cfg.promptNotifySec || 0}s`,
       `Notification webhook: ${cfg.notificationWebhookEnabled ? "enabled" : "disabled"}`,
@@ -641,7 +646,8 @@ export default function feishuExtension(pi: ExtensionAPI) {
   }
 
   function versionReport(detailed = true) {
-    const omp = spawnSync(ompCliPath, ["--version"], { encoding: "utf8", timeout: 5_000 });
+    const ompPath = getOmpCliPath();
+    const omp = spawnSync(ompPath, ["--version"], { encoding: "utf8", timeout: 5_000 });
     const ompVersion = omp.status === 0 ? `${omp.stdout || omp.stderr}`.trim() : "unavailable";
     const report = [
       `Feishu plugin: ${pluginVersion()}`,
@@ -680,7 +686,7 @@ export default function feishuExtension(pi: ExtensionAPI) {
     }
     const checks = [
       `${cfg ? "OK" : "FAIL"} config: ${cfg ? CONFIG_PATH : "missing; run /feishu setup"}`,
-      `${existsSync(ompCliPath) ? "OK" : "FAIL"} omp cli: ${ompCliPath}`,
+      `${existsSync(getOmpCliPath()) ? "OK" : "FAIL"} omp cli: ${getOmpCliPath()}`,
       `${owner?.status === "connected" ? "OK" : "WARN"} gateway: ${owner ? formatOwner(owner) : "not running"}`,
       `${supervisorRunning ? "OK" : "WARN"} supervisor: ${supervisor ? `pid=${supervisor.pid}` : "not running"}`,
       `${homeOk ? "OK" : "FAIL"} home: ${homeText}`,
@@ -697,7 +703,7 @@ export default function feishuExtension(pi: ExtensionAPI) {
     const version = pluginVersion();
     return buildDaemonSpec({
       bunBin: process.execPath,
-      ompCliPath,
+      ompCliPath: getOmpCliPath(),
       extensionPath: fileURLToPath(import.meta.url),
       workspace: process.cwd(),
       agentDir: AGENT_DIR,

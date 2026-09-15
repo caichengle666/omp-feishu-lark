@@ -11,7 +11,7 @@ import {
   SessionManager,
 } from "@oh-my-pi/pi-coding-agent";
 import type { FeishuBridgeRuntime } from "./bridge-runtime.js";
-import type { AgentBackend } from "./agent-backend.js";
+import type { AgentBackend, AgentModel } from "./agent-backend.js";
 import { ensureRoot, readJson, STATE_PATH, writeJson } from "./config.js";
 import { debugLog } from "./debug.js";
 import { waitForPrompt } from "./prompt-timeout.js";
@@ -282,6 +282,18 @@ export class ConversationManager {
   async selectModel(key: string, provider: string, modelId: string, onReply: (text: string) => Promise<void>) {
     const previous = this.previousTurn(key);
     const next = previous.then(async () => {
+      if (this.agentBackend?.getAvailableModels) {
+        const model = (await this.agentBackend.getAvailableModels()).find((item) => item.provider === provider && item.id === modelId);
+        if (!model) {
+          await onReply(`这个模型当前不可用：${provider}/${modelId}。请发送 /model 重新选择。`);
+          return;
+        }
+        this.state.models![key] = { provider, id: modelId };
+        writeJson(STATE_PATH, this.state);
+        await this.agentBackend.reset(key);
+        await onReply(`已切换到 ${provider}/${modelId}。当前飞书会话后续都会使用这个模型。`);
+        return;
+      }
       const modelRegistry = await this.getModelRegistry();
       const model = modelRegistry.find(provider, modelId);
       if (!model || !modelRegistry.hasConfiguredAuth(model)) {
@@ -419,6 +431,7 @@ export class ConversationManager {
   }
 
   async getAvailableModels() {
+    if (this.agentBackend?.getAvailableModels) return this.agentBackend.getAvailableModels();
     const modelRegistry = await this.getModelRegistry();
     const available = modelRegistry.getAvailable();
     return [...available].sort((a, b) => {
@@ -429,6 +442,11 @@ export class ConversationManager {
   }
 
   async getSelectedModel(key: string) {
+    if (this.agentBackend?.getAvailableModels) {
+      const available = await this.agentBackend.getAvailableModels();
+      const selected = this.state.models?.[key];
+      return available.find((item) => item.provider === selected?.provider && item.id === selected.id) || available[0];
+    }
     return this.resolveSelectedModel(key, true);
   }
 
@@ -452,7 +470,11 @@ export class ConversationManager {
         return defaultModel;
       }
     }
-    const available = await this.getAvailableModels();
+    const available = [...modelRegistry.getAvailable()].sort((a, b) => {
+      const providerCmp = a.provider.localeCompare(b.provider);
+      if (providerCmp !== 0) return providerCmp;
+      return a.id.localeCompare(b.id);
+    });
     return available[0];
   }
 
@@ -463,6 +485,13 @@ export class ConversationManager {
   async refreshModels(): Promise<void> {
     const registry = await this.getModelRegistry();
     await registry.refresh("online");
+  }
+
+  private async resolveBackendModel(key: string): Promise<AgentModel | undefined> {
+    const available = await this.agentBackend?.getAvailableModels?.();
+    if (!available?.length) return undefined;
+    const selected = this.state.models?.[key];
+    return available.find((item) => item.provider === selected?.provider && item.id === selected.id) || available[0];
   }
 
   private async getModelRegistry(): Promise<ModelRegistry> {
@@ -607,7 +636,7 @@ export class ConversationManager {
       debugLog("feishu.rpc_prompt.start", { key, textLength: userText.length, imageCount: images.length });
       const run: ActiveRun = { runId: status?.runId, stopped: false, status, abort: async () => { await this.agentBackend!.abort(key); } };
       this.activeRuns.set(key, run);
-      const model = await this.resolveSelectedModel(key, false);
+      const model = await this.resolveBackendModel(key);
       let sessionId: string | undefined;
       const result = await this.agentBackend!.prompt(key, {
         cwd: this.getWorkspace(key),

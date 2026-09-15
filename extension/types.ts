@@ -1,7 +1,7 @@
 export type Domain = "feishu" | "lark";
 export type GroupPolicy = "open" | "mention";
 export type CardActionMode = "webhook" | "ws";
-export type FeishuAgentBackend = "omp" | "dsh";
+export type FeishuAgentBackend = "auto" | "omp" | "dsh";
 
 export type OmpApprovalMode = "always-ask" | "write" | "yolo";
 

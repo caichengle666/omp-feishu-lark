@@ -347,6 +347,10 @@ set this in `~/.omp/agent/feishu/config.json`:
 }
 ```
 
+Set `"agentBackend": "auto"` to select DSH when the configured `dsh` command
+exists and fall back to OMP otherwise. An omitted value remains OMP for
+backward compatibility; explicit `"omp"` and `"dsh"` always take precedence.
+
 The DSH backend starts one `dsh --profile sdk` child per Feishu conversation.
 Set `FEISHU_DSH_COMMAND` when `dsh` is not on PATH, and
 `FEISHU_DSH_ARGS` when a different DSH profile or launch arguments are needed.
