@@ -335,8 +335,9 @@ Environment-only configurations can use `FEISHU_OMP_ENABLE_SKILLS`,
 ### Agent backends
 
 The Feishu layer has a backend interface so different agent runtimes can share
-the same transport, permissions, cards, and conversation routing. OMP remains
-the default. To run each Feishu conversation in a DeepSeek Harness SDK runtime,
+the same transport, permissions, cards, and conversation routing. The backend
+is detected automatically: DSH is used when its command is available, otherwise
+the plugin uses OMP. To force DSH for every Feishu conversation,
 set this in `~/.omp/agent/feishu/config.json`:
 
 ```json
@@ -347,9 +348,9 @@ set this in `~/.omp/agent/feishu/config.json`:
 }
 ```
 
-Set `"agentBackend": "auto"` to select DSH when the configured `dsh` command
-exists and fall back to OMP otherwise. An omitted value remains OMP for
-backward compatibility; explicit `"omp"` and `"dsh"` always take precedence.
+Set `"agentBackend": "auto"` to make the automatic choice explicit. An omitted
+value has the same automatic behavior; explicit `"omp"` and `"dsh"` always take
+precedence.
 
 The DSH backend starts one `dsh --profile sdk` child per Feishu conversation.
 Set `FEISHU_DSH_COMMAND` when `dsh` is not on PATH, and

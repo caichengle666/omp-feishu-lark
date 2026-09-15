@@ -9,7 +9,7 @@ export type ResolvedAgentBackend = "dsh" | "omp";
  *
  * Explicit config always wins. `"auto"` probes the local machine: if a `dsh`
  * executable is present on PATH it uses DSH, otherwise it falls back to OMP.
- * An unset backend keeps the historical OMP default. Keep this side-effect free
+ * An unset backend also uses automatic detection. Keep this side-effect free
  * and fail closed so a missing `dsh` never blocks startup.
  */
 export function resolveAgentBackend(
@@ -17,7 +17,7 @@ export function resolveAgentBackend(
   options: { command?: string } = {},
 ): ResolvedAgentBackend {
   if (configBackend === "dsh") return "dsh";
-  if (configBackend === "omp" || configBackend === undefined) return "omp";
+  if (configBackend === "omp") return "omp";
   const command = options.command || process.env.FEISHU_DSH_COMMAND || "dsh";
   return commandAvailable(command) ? "dsh" : "omp";
 }

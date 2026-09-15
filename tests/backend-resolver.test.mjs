@@ -10,7 +10,14 @@ test("explicit backend selection takes precedence", () => {
   assert.equal(resolveAgentBackend("dsh", { command: "missing-dsh" }), "dsh");
 });
 
-test("unset backend keeps the existing OMP default", () => {
+test("unset backend automatically detects DSH when available", () => {
+  const dir = mkdtempSync(join(tmpdir(), "omp-feishu-backend-"));
+  const command = join(dir, process.platform === "win32" ? "dsh.cmd" : "dsh");
+  writeFileSync(command, "");
+  assert.equal(resolveAgentBackend(undefined, { command }), "dsh");
+});
+
+test("unset backend falls back to OMP when DSH is unavailable", () => {
   assert.equal(resolveAgentBackend(undefined, { command: "missing-dsh" }), "omp");
 });
 
