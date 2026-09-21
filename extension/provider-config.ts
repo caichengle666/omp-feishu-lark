@@ -100,7 +100,17 @@ export async function syncProvider(name: string) {
   return updateModelsConfig((latest) => {
     const current = latest.providers?.[name];
     if (!current || current.feishuManaged !== true || providerFingerprint(current) !== providerFingerprint(provider)) throw new Error(`Provider ${name} 已被修改，未执行同步。`);
-    latest.providers![name] = { ...current, api: resolvedApi, discovery: { type: "openai-models-list", timeoutMs: 15000 }, models };
+    const existingModels = new Map<string, Provider>();
+    for (const item of Array.isArray(current.models) ? current.models : []) {
+      const previous = item as Provider;
+      if (typeof previous?.id === "string") existingModels.set(previous.id, previous);
+    }
+    latest.providers![name] = {
+      ...current,
+      api: resolvedApi,
+      discovery: { type: "openai-models-list", timeoutMs: 15000 },
+      models: models.map((model) => ({ ...(existingModels.get(model.id) || {}), ...model })),
+    };
     return { name, modelCount: models.length };
   });
 }
@@ -120,11 +130,16 @@ function readModelsConfig(): ModelsConfig {
   return parsed;
 }
 
+function stringifyModelsYaml(config: ModelsConfig): string {
+  const text = Bun.YAML.stringify(config, null, "  ") as unknown;
+  return typeof text === "string" ? text : JSON.stringify(config, null, 2);
+}
+
 async function writeModelsConfigUnlocked(config: ModelsConfig) {
   const temporaryPath = `${MODELS_PATH}.tmp-${process.pid}-${Date.now()}`;
   try {
     if (existsSync(MODELS_PATH)) copyFileSync(MODELS_PATH, BACKUP_PATH);
-    writeFileSync(temporaryPath, Bun.YAML.stringify(config), { encoding: "utf8", mode: 0o600 });
+    writeFileSync(temporaryPath, stringifyModelsYaml(config), { encoding: "utf8", mode: 0o600 });
     renameSync(temporaryPath, MODELS_PATH);
     try { chmodSync(MODELS_PATH, 0o600); } catch {}
   } catch (error) {

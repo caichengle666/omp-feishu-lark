@@ -14,6 +14,14 @@ All credit for the plugin itself goes to the upstream author. Bugs in the
 patches are not upstream's problem; report plugin bugs upstream and packaging
 bugs here.
 
+## v0.4.69 highlights
+
+- `/feishu provider sync` now writes `models.yml` as indented multi-line YAML
+  instead of collapsing the whole file into one unreadable line.
+- Provider synchronization preserves hand-written model metadata such as
+  `contextWindow`, `maxTokens`, `input`, and `reasoning`, which upstream
+  `/v1/models` never returns.
+
 ## v0.4.62 highlights
 
 - RPC launches ignore interactive `approvalMode` flags because the OMP RPC channel does not expose tool-permission responses; this prevents permanent approval waits. Tool approval-card support remains an OMP upstream responsibility.
