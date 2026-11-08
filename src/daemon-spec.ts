@@ -3,6 +3,20 @@ import { homedir } from "node:os";
 
 export type OmpApprovalMode = "always-ask" | "write" | "yolo";
 
+// launchd/systemd hand daemons a PATH copied from the unit they were started
+// from, which the plugin itself wrote from this spec: without dedupe every
+// restart prepends bunDir again, so the unit never matches the expected env
+// and the daemon boots itself out on each start.
+export function dedupePath(value: string): string {
+  const seen = new Set<string>();
+  const parts = value.split(delimiter).filter((part) => {
+    if (!part || seen.has(part)) return false;
+    seen.add(part);
+    return true;
+  });
+  return parts.join(delimiter);
+}
+
 export type OmpLaunchOptions = {
   enableSkills?: boolean;
   skills?: string[];
@@ -94,7 +108,7 @@ export function buildDaemonSpec(input: DaemonSpecInput): DaemonSpec {
     OMP_CLI_PATH: input.ompCliPath,
     PI_CODING_AGENT_DIR: input.agentDir,
     PI_FEISHU_DAEMON: "1",
-    PATH: [bunDir, input.path ?? process.env.PATH ?? ""].filter(Boolean).join(delimiter),
+    PATH: dedupePath([bunDir, input.path ?? process.env.PATH ?? ""].join(delimiter)),
   };
   if (input.pluginVersion) env.FEISHU_PLUGIN_VERSION = input.pluginVersion;
   env.HOME = homeDir;

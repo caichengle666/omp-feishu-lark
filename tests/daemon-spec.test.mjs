@@ -91,3 +91,12 @@ test("preserves Windows paths with spaces as a spawn argument array", { skip: pr
   assert.equal(spec.supervisorCommand[1], "C:\\Users\\User\\.omp\\extensions\\feishu\\support\\feishu-supervisor.mjs");
   assert.equal(spec.supervisorCommand[spec.supervisorCommand.indexOf("C:\\Users\\User\\work dir")], "C:\\Users\\User\\work dir");
 });
+
+test("daemon spec PATH reaches a fixed point instead of duplicating bunDir", () => {
+  const first = buildDaemonSpec({ ...baseInput, path: `/usr/bin${delimiter}/bin` });
+  const second = buildDaemonSpec({ ...baseInput, path: first.env.PATH });
+  assert.equal(second.env.PATH, first.env.PATH);
+  assert.equal(second.env.PATH.split(delimiter).filter((part) => part === dirname(baseInput.bunBin)).length, 1);
+  // input.path wins over process.env.PATH but bunDir is still prepended once.
+  assert.equal(first.env.PATH, [dirname(baseInput.bunBin), "/usr/bin", "/bin"].join(delimiter));
+});
