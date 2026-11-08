@@ -110,3 +110,27 @@ test("launchd ensure refuses a foreign plist", async () => {
   assert.equal(result.status.state, "foreign");
   assert.match(result.message, /拒绝覆盖/);
 });
+
+test("launchd inspect stays healthy across generations when PATH is inherited from the unit", async () => {
+  // Generation 1 reads the ambient PATH, generation 2 is started by launchd
+  // with the PATH generation 1 wrote into the plist. The spec must not drift,
+  // otherwise inspect() reports misconfigured and syncOsAutostart() boots the
+  // very label it is running under.
+  const input = {
+    bunBin: "/opt/homebrew/bin/bun",
+    ompCliPath: "/Users/feishu/.bun/install/global/node_modules/@oh-my-pi/pi-coding-agent/dist/cli.js",
+    extensionPath: "/Users/feishu/.omp/extensions/feishu/extension/index.ts",
+    workspace: "/Users/feishu/work",
+    agentDir: "/Users/feishu/.omp/agent",
+    runtimeRoot: "/Users/feishu/.omp/agent/feishu",
+    pluginVersion: "0.4.40",
+  };
+  const gen1 = buildDaemonSpec({ ...input, path: "/usr/bin:/bin" });
+  const plist = buildLaunchdPlist(gen1);
+  const gen2 = buildDaemonSpec({ ...input, path: gen1.env.PATH });
+
+  assert.equal(gen2.env.PATH, gen1.env.PATH);
+  const { deps } = makeDeps({ plist, exists: () => true });
+  const status = await inspect(gen2, deps);
+  assert.equal(status.state, "healthy");
+});
