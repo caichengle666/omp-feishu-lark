@@ -5,6 +5,7 @@ import type { Client, WSClient } from "@larksuiteoapi/node-sdk";
 import { detectImageMime } from "./attachments.js";
 import { debugLog } from "./debug.js";
 import { buildMarkdownCardParts, buildPostMessages, chooseMessageMode } from "./rich-text.js";
+import { toThreadMessage, type FeishuThreadMessage } from "./thread-context.js";
 import { FeishuCardActionWebhook } from "./card-action-webhook.js";
 import { withFeishuRetry } from "./feishu-retry.js";
 
@@ -276,6 +277,34 @@ export class FeishuTransport {
       });
       return "group";
     }
+  }
+
+  /** 话题历史（原帖+前序评论）：飞书 GET /im/v1/messages?container_id_type=thread。 */
+  async fetchThreadHistory(threadId: string, limit = 60): Promise<FeishuThreadMessage[]> {
+    const messages: FeishuThreadMessage[] = [];
+    let pageToken: string | undefined;
+    while (messages.length < limit) {
+      const res = await withFeishuRetry(
+        () => this.sdkClient!.im.v1.message.list({
+          params: {
+            container_id_type: "thread",
+            container_id: threadId,
+            sort_type: "ByCreateTimeAsc",
+            page_size: 50,
+            page_token: pageToken,
+          },
+        }),
+        "thread_history",
+      );
+      const data = res?.data;
+      for (const item of data?.items || []) {
+        if (item?.deleted) continue;
+        messages.push(toThreadMessage(item));
+      }
+      pageToken = data?.page_token;
+      if (!data?.has_more || !pageToken) break;
+    }
+    return messages.slice(0, limit);
   }
 
   private async addReaction(messageId: string, emojiType: string) {

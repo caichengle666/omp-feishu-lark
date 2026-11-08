@@ -195,7 +195,15 @@ function extractPostText(node: unknown, attachments: FeishuAttachment[]): string
     return `@${typeof obj.user_name === "string" && obj.user_name ? obj.user_name : "user"}`;
   }
 
-  if ((tag === "text" || tag === "a") && typeof obj.text === "string") {
+  if (tag === "a") {
+    // 链接文字常被改写（"点这里"/标题），href 必须一并带出，否则 URL 丢失
+    const href = typeof obj.href === "string" ? obj.href : "";
+    const label = typeof obj.text === "string" ? obj.text : "";
+    if (href && !label.includes(href)) return label ? `${label} ${href}` : href;
+    return label || href;
+  }
+
+  if (tag === "text" && typeof obj.text === "string") {
     return obj.text;
   }
 

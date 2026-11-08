@@ -9,6 +9,7 @@ import { feishuHelpText, formatOmpCommands } from "./help.js";
 import { transcribeTencentAudio } from "./tencent-asr.js";
 import type { FeishuBridgeStore } from "./bridge-store.js";
 import type { FeishuTransport } from "./transport.js";
+import { formatThreadContext, THREAD_CONTEXT_TIMEOUT_MS, type FeishuThreadMessage } from "./thread-context.js";
 import { FEISHU_THINKING_LEVELS, type FeishuMessage, type FeishuThinkingLevel } from "./types.js";
 
 const CONTENT_DEDUPE_TTL_MS = 5_000;
@@ -133,7 +134,6 @@ export class FeishuMessageHandler {
         return;
       }
 
-      const prompt = buildPrompt(msg, promptText, fileSections, imageInputs, skippedImageCount, modelSupportsImage, downloadErrors);
       const status = new TaskStatusCard(
         key,
         msg.messageId,
@@ -143,6 +143,9 @@ export class FeishuMessageHandler {
         msg.chatId,
       );
       await status.start();
+      // 先让用户看到「已受理」，再拉话题历史（失败只记日志，不阻塞本条消息）
+      const threadContext = await this.buildThreadContext(msg, transport);
+      const prompt = buildPrompt(msg, promptText, fileSections, imageInputs, skippedImageCount, modelSupportsImage, downloadErrors, threadContext);
       const modelStartedAt = Date.now();
       await this.conversations.promptWithImages(key, prompt, imageInputs, async (reply) => {
         await transport.replyText(msg.messageId, reply);
@@ -492,6 +495,25 @@ export class FeishuMessageHandler {
     return true;
   }
 
+  /** 话题历史注入：原帖（含链接）与前序评论必须进 prompt，否则模型只能凭空推断审查对象。 */
+  private async buildThreadContext(msg: FeishuMessage, transport: FeishuTransport) {
+    if (msg.chatType === "p2p" || !msg.threadId) return "";
+    let history: FeishuThreadMessage[];
+    try {
+      history = await withTimeout(transport.fetchThreadHistory(msg.threadId), THREAD_CONTEXT_TIMEOUT_MS, "话题历史读取超时");
+    } catch (error) {
+      debugLog("feishu.thread.history_failed", {
+        messageId: msg.messageId,
+        threadId: msg.threadId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return "";
+    }
+    const section = formatThreadContext(history, msg.messageId);
+    debugLog("feishu.thread.context", { messageId: msg.messageId, threadId: msg.threadId, messages: history.length, chars: section.length });
+    return section;
+  }
+
   private async processAttachments(
     msg: FeishuMessage,
     attachments: Array<{ kind: "image" | "file" | "audio"; fileKey: string; fileName?: string }>,
@@ -601,7 +623,7 @@ export class FeishuMessageHandler {
   }
 }
 
-function buildPrompt(
+export function buildPrompt(
   msg: FeishuMessage,
   text: string,
   fileSections: string[],
@@ -609,8 +631,10 @@ function buildPrompt(
   skippedImageCount: number,
   modelSupportsImage: boolean,
   downloadErrors: string[],
+  threadContext = "",
 ) {
   const contentParts: string[] = [];
+  if (threadContext) contentParts.push(threadContext, "## 本条消息（需要处理的消息）");
   if (text.trim()) contentParts.push(text.trim());
   if (fileSections.length) contentParts.push(fileSections.join("\n\n"));
   if (!contentParts.length && imageInputs.length) {
